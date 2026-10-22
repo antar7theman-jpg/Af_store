@@ -1,0 +1,255 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global default-deny safety net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    // Store Owner: Deffas antar (Antar7theman@gmail.com)
+    function isStoreOwner() {
+      return isSignedIn() &&
+             'email_verified' in request.auth.token &&
+             request.auth.token.email_verified == true &&
+             'email' in request.auth.token &&
+             request.auth.token.email.lower() == 'antar7theman@gmail.com';
+    }
+
+    // Regular Independent Manager: registered in /admins/{uid}
+    function isRegularManager() {
+      return isSignedIn() &&
+             exists(/databases/$(database)/documents/admins/$(request.auth.uid));
+    }
+
+    function isAdmin() {
+      return isStoreOwner() || isRegularManager();
+    }
+
+    // Helper: Checks if a worker record is affiliated with the calling manager (or unassigned pending worker)
+    function isAffiliatedWithCallingManager(data) {
+      let parentUid = data.get('parentManagerUid', '');
+      return data.role == 'worker' && (
+        parentUid == '' ||
+        parentUid == request.auth.uid ||
+        data.get('approvedByUid', '') == request.auth.uid
+      );
+    }
+
+    function isValidStaffAccount(data) {
+      let requiredKeys = [
+        'userId', 'storeId', 'email', 'fullName', 'phone',
+        'requestedRole', 'role', 'approvalStatus',
+        'approvedByUid', 'approvedByName',
+        'canMakeSales', 'canManageInventory', 'canEditPrices',
+        'canViewReports', 'canManageDebtsAndCustomers', 'canRefundOrVoid',
+        'canApplyDiscounts', 'canViewCostPrices', 'canExportData',
+        'canManagePurchaseInvoices',
+        'createdAt', 'updatedAt'
+      ];
+      let allowedKeys = [
+        'userId', 'storeId', 'email', 'fullName', 'phone',
+        'requestedRole', 'role', 'approvalStatus',
+        'approvedByUid', 'approvedByName',
+        'parentManagerUid', 'parentManagerName', 'parentManagerEmail',
+        'branchName', 'secretPin',
+        'canMakeSales', 'canManageInventory', 'canEditPrices',
+        'canViewReports', 'canManageDebtsAndCustomers', 'canRefundOrVoid',
+        'canApplyDiscounts', 'canViewCostPrices', 'canExportData',
+        'canManagePurchaseInvoices',
+        'createdAt', 'updatedAt'
+      ];
+      return data.keys().hasAll(requiredKeys) &&
+             data.keys().hasOnly(allowedKeys) &&
+             data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+             data.storeId is string && data.storeId == 'af_store' &&
+             data.email is string && data.email.size() >= 3 && data.email.size() <= 150 &&
+             data.fullName is string && data.fullName.size() >= 1 && data.fullName.size() <= 100 &&
+             data.phone is string && data.phone.size() >= 0 && data.phone.size() <= 30 &&
+             data.requestedRole in ['worker', 'manager', 'admin', 'owner'] &&
+             data.role in ['worker', 'manager', 'admin', 'owner'] &&
+             data.approvalStatus in ['PENDING', 'APPROVED', 'REJECTED', 'SUSPENDED'] &&
+             data.approvedByUid is string && data.approvedByUid.size() <= 128 &&
+             data.approvedByName is string && data.approvedByName.size() <= 100 &&
+             (!('parentManagerUid' in data) || (data.parentManagerUid is string && data.parentManagerUid.size() <= 128)) &&
+             (!('parentManagerName' in data) || (data.parentManagerName is string && data.parentManagerName.size() <= 100)) &&
+             (!('parentManagerEmail' in data) || (data.parentManagerEmail is string && data.parentManagerEmail.size() <= 150)) &&
+             (!('branchName' in data) || (data.branchName is string && data.branchName.size() <= 100)) &&
+             (!('secretPin' in data) || (data.secretPin is string && data.secretPin.size() <= 64)) &&
+             data.canMakeSales is bool &&
+             data.canManageInventory is bool &&
+             data.canEditPrices is bool &&
+             data.canViewReports is bool &&
+             data.canManageDebtsAndCustomers is bool &&
+             data.canRefundOrVoid is bool &&
+             data.canApplyDiscounts is bool &&
+             data.canViewCostPrices is bool &&
+             data.canExportData is bool &&
+             data.canManagePurchaseInvoices is bool &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidAdminRecord(data) {
+      let allowedKeys = ['userId', 'storeId', 'email', 'fullName', 'createdAt'];
+      return data.keys().hasAll(allowedKeys) &&
+             data.keys().hasOnly(allowedKeys) &&
+             data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+             data.storeId is string && data.storeId == 'af_store' &&
+             data.email is string && data.email.size() >= 3 && data.email.size() <= 150 &&
+             data.fullName is string && data.fullName.size() >= 1 && data.fullName.size() <= 100 &&
+             data.createdAt is timestamp && data.createdAt <= request.time;
+    }
+
+    match /staff_accounts/{accountId} {
+      allow get: if isSignedIn() && isValidId(accountId) && (
+        request.auth.uid == accountId ||
+        isStoreOwner() ||
+        (isRegularManager() && (resource == null || isAffiliatedWithCallingManager(resource.data))) ||
+        (resource != null && 'email' in request.auth.token && resource.data.email.lower() == request.auth.token.email.lower())
+      );
+
+      allow list: if isSignedIn() && (
+        resource.data.userId == request.auth.uid ||
+        (resource.data.storeId == 'af_store' && isStoreOwner()) ||
+        (resource.data.storeId == 'af_store' && isRegularManager() && isAffiliatedWithCallingManager(resource.data)) ||
+        ('email' in request.auth.token && resource.data.email.lower() == request.auth.token.email.lower())
+      );
+
+      allow create: if isSignedIn() &&
+                       isValidId(accountId) &&
+                       isValidStaffAccount(incoming()) &&
+                       incoming().userId == accountId && (
+                         // Action 1: Self-registration as pending worker ONLY
+                         (
+                           request.auth.uid == accountId &&
+                           incoming().approvalStatus == 'PENDING' &&
+                           incoming().role == 'worker' &&
+                           incoming().requestedRole == 'worker' &&
+                           incoming().approvedByUid == '' &&
+                           incoming().approvedByName == ''
+                         ) ||
+                         // Action 2: Store Owner (Deffas antar - Antar7theman@gmail.com) creating or bootstrapping any account (including Independent Managers)
+                         isStoreOwner() ||
+                         // Action 3: Independent Manager creating an affiliated worker account belonging to them
+                         (
+                           isRegularManager() &&
+                           incoming().role == 'worker' &&
+                           incoming().requestedRole == 'worker' &&
+                           incoming().get('parentManagerUid', request.auth.uid) == request.auth.uid
+                         ) ||
+                         // Action 4: Pre-provisioned Manager or Worker claiming their UID document when matching their verified email
+                         (
+                           request.auth.uid == accountId &&
+                           incoming().role in ['manager', 'worker'] &&
+                           incoming().approvalStatus == 'APPROVED' &&
+                           'email' in request.auth.token &&
+                           'email_verified' in request.auth.token &&
+                           request.auth.token.email_verified == true &&
+                           incoming().email.lower() == request.auth.token.email.lower()
+                         )
+                       );
+
+      allow update: if isSignedIn() &&
+                       resource != null &&
+                       isValidId(accountId) &&
+                       isValidStaffAccount(incoming()) &&
+                       incoming().userId == existing().userId &&
+                       incoming().storeId == existing().storeId &&
+                       incoming().email == existing().email &&
+                       incoming().createdAt == existing().createdAt && (
+                         // Action 1: Staff member updating only their personal contact details while keeping role, status & permissions intact
+                         (
+                           request.auth.uid == accountId &&
+                           incoming().requestedRole == 'worker' &&
+                           incoming().diff(existing()).affectedKeys().hasOnly(['fullName', 'phone', 'requestedRole', 'updatedAt'])
+                         ) ||
+                         // Action 2: Store Owner (Deffas antar) can approve, promote, or update any Worker or Independent Manager account
+                         (
+                           isStoreOwner() &&
+                           incoming().diff(existing()).affectedKeys().hasOnly([
+                             'fullName', 'phone', 'requestedRole', 'role', 'approvalStatus',
+                             'approvedByUid', 'approvedByName',
+                             'parentManagerUid', 'parentManagerName', 'parentManagerEmail',
+                             'branchName', 'secretPin',
+                             'canMakeSales', 'canManageInventory', 'canEditPrices',
+                             'canViewReports', 'canManageDebtsAndCustomers', 'canRefundOrVoid',
+                             'canApplyDiscounts', 'canViewCostPrices', 'canExportData',
+                             'canManagePurchaseInvoices', 'updatedAt'
+                           ])
+                         ) ||
+                         // Action 3: Independent Manager can ONLY approve, suspend, or update their OWN affiliated WORKER accounts
+                         (
+                           isRegularManager() &&
+                           isAffiliatedWithCallingManager(existing()) &&
+                           incoming().role == 'worker' &&
+                           incoming().requestedRole == 'worker' &&
+                           incoming().get('parentManagerUid', request.auth.uid) == request.auth.uid &&
+                           incoming().diff(existing()).affectedKeys().hasOnly([
+                             'fullName', 'phone', 'requestedRole', 'role', 'approvalStatus',
+                             'approvedByUid', 'approvedByName',
+                             'parentManagerUid', 'parentManagerName', 'parentManagerEmail',
+                             'branchName', 'secretPin',
+                             'canMakeSales', 'canManageInventory', 'canEditPrices',
+                             'canViewReports', 'canManageDebtsAndCustomers', 'canRefundOrVoid',
+                             'canApplyDiscounts', 'canViewCostPrices', 'canExportData',
+                             'canManagePurchaseInvoices', 'updatedAt'
+                           ])
+                         )
+                       );
+
+      allow delete: if isSignedIn() && (
+        (isStoreOwner() && accountId != request.auth.uid) ||
+        (isRegularManager() && resource != null && isAffiliatedWithCallingManager(existing()) && accountId != request.auth.uid) ||
+        (resource != null && 'email' in request.auth.token && existing().email.lower() == request.auth.token.email.lower() && accountId != request.auth.uid)
+      );
+    }
+
+    match /admins/{adminId} {
+      allow get: if isSignedIn() && isValidId(adminId) && (
+        request.auth.uid == adminId || isAdmin()
+      );
+
+      allow list: if isAdmin();
+
+      // Only Store Owner (Deffas antar) or a pre-approved Manager claiming their own UID can create an /admins record
+      allow create: if isSignedIn() &&
+                       isValidId(adminId) &&
+                       isValidAdminRecord(incoming()) &&
+                       incoming().userId == adminId && (
+                         isStoreOwner() ||
+                         (
+                           request.auth.uid == adminId &&
+                           exists(/databases/$(database)/documents/staff_accounts/$(request.auth.uid)) &&
+                           get(/databases/$(database)/documents/staff_accounts/$(request.auth.uid)).data.role == 'manager' &&
+                           get(/databases/$(database)/documents/staff_accounts/$(request.auth.uid)).data.approvalStatus == 'APPROVED'
+                         )
+                       );
+
+      allow update: if isStoreOwner() &&
+                       resource != null &&
+                       isValidId(adminId) &&
+                       isValidAdminRecord(incoming()) &&
+                       incoming().userId == existing().userId &&
+                       incoming().storeId == existing().storeId &&
+                       incoming().createdAt == existing().createdAt;
+
+      allow delete: if isStoreOwner() && adminId != request.auth.uid;
+    }
+  }
+}
