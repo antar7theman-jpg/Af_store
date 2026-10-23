@@ -560,51 +560,56 @@ fun AFStoreMainApp(
                                         handleTabClick(tab)
                                     },
                                     icon = {
-                                        Box(
-                                            contentAlignment = Alignment.Center,
-                                            modifier = Modifier
-                                                .offset(y = (-5).dp)
-                                                .width(capsuleWidth)
-                                                .height(capsuleHeight)
-                                                .clip(RoundedCornerShape(16.dp))
-                                                .then(
-                                                    if (isPrimarySaleTab && !isSelectedTab) {
-                                                        Modifier.border(
-                                                            BorderStroke(
-                                                                0.8.dp,
-                                                                MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
-                                                            ),
-                                                            RoundedCornerShape(16.dp)
-                                                        )
-                                                    } else Modifier
-                                                )
-                                                .background(
-                                                    when {
-                                                        isSelectedTab -> MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)
-                                                        isPrimarySaleTab -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
-                                                        else -> Color.Transparent
-                                                    }
-                                                )
+                                        Column(
+                                            horizontalAlignment = Alignment.CenterHorizontally,
+                                            verticalArrangement = Arrangement.Center
                                         ) {
-                                            Icon(
-                                                imageVector = tab.icon,
-                                                contentDescription = tab.labelAr,
-                                                tint = if (isSelectedTab) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                                                modifier = Modifier.size(iconSize)
+                                            Text(
+                                                text = tab.labelAr,
+                                                fontSize = if (isCompactScreen) 9.5.sp else 10.5.sp,
+                                                fontWeight = if (isSelectedTab) FontWeight.ExtraBold else FontWeight.Medium,
+                                                color = if (isSelectedTab) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                                maxLines = 1,
+                                                softWrap = false,
+                                                overflow = TextOverflow.Ellipsis,
+                                                modifier = Modifier.padding(bottom = 3.dp)
                                             )
+
+                                            Box(
+                                                contentAlignment = Alignment.Center,
+                                                modifier = Modifier
+                                                    .width(capsuleWidth)
+                                                    .height(capsuleHeight)
+                                                    .clip(RoundedCornerShape(16.dp))
+                                                    .then(
+                                                        if (isPrimarySaleTab && !isSelectedTab) {
+                                                            Modifier.border(
+                                                                BorderStroke(
+                                                                    0.8.dp,
+                                                                    MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+                                                                ),
+                                                                RoundedCornerShape(16.dp)
+                                                            )
+                                                        } else Modifier
+                                                    )
+                                                    .background(
+                                                        when {
+                                                            isSelectedTab -> MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)
+                                                            isPrimarySaleTab -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
+                                                            else -> Color.Transparent
+                                                        }
+                                                    )
+                                            ) {
+                                                Icon(
+                                                    imageVector = tab.icon,
+                                                    contentDescription = tab.labelAr,
+                                                    tint = if (isSelectedTab) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    modifier = Modifier.size(iconSize)
+                                                )
+                                            }
                                         }
                                     },
-                                    label = {
-                                        Text(
-                                            text = tab.labelAr,
-                                            fontSize = if (isCompactScreen) 9.5.sp else 10.5.sp,
-                                            fontWeight = if (isSelectedTab) FontWeight.Bold else FontWeight.Medium,
-                                            maxLines = 1,
-                                            softWrap = false,
-                                            overflow = TextOverflow.Ellipsis,
-                                            modifier = Modifier.offset(y = (-5).dp)
-                                        )
-                                    },
+                                    label = null,
                                     colors = NavigationBarItemDefaults.colors(
                                         selectedIconColor = MaterialTheme.colorScheme.primary,
                                         selectedTextColor = MaterialTheme.colorScheme.primary,
