@@ -509,7 +509,7 @@ data class ActivityLog(
     val metadata: String = ""
 ) {
     val formattedTime: String
-        get() = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(timestamp))
+        get() = SimpleDateFormat("HH:mm:ss dd-MM-yyyy", Locale.ENGLISH).format(Date(timestamp))
 }
 
 @Immutable
@@ -604,7 +604,7 @@ data class SyncQueueItem(
     val updatedAt: Long = System.currentTimeMillis()
 ) {
     val formattedTime: String
-        get() = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date(updatedAt))
+        get() = SimpleDateFormat("HH:mm:ss dd-MM-yyyy", Locale.ENGLISH).format(Date(updatedAt))
 }
 
 @Immutable
@@ -629,7 +629,7 @@ data class WorkerLocation(
     val batteryPercent: Int = 100
 ) {
     val formattedTime: String
-        get() = SimpleDateFormat("HH:mm:ss dd/MM", Locale.getDefault()).format(Date(timestamp))
+        get() = SimpleDateFormat("HH:mm:ss dd-MM-yyyy", Locale.ENGLISH).format(Date(timestamp))
 
     val isRecentlyActive: Boolean
         get() = (System.currentTimeMillis() - timestamp) < 1000 * 60 * 15 // Active in last 15 mins
@@ -659,7 +659,7 @@ data class WorkerRouteCoordinate(
     val timestamp: Long = System.currentTimeMillis()
 ) {
     val formattedTime: String
-        get() = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date(timestamp))
+        get() = SimpleDateFormat("HH:mm:ss", Locale.ENGLISH).format(Date(timestamp))
 }
 
 

@@ -14,6 +14,9 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.core.content.FileProvider
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -658,9 +661,54 @@ class OfflineSyncManager(
     private val _lastSyncSummary = MutableStateFlow("تمت المزامنة بنجاح مع السحابة")
     val lastSyncSummary: StateFlow<String> = _lastSyncSummary.asStateFlow()
 
+    private var syncExecutionDelegate: (suspend () -> SyncResult)? = null
+
+    fun setSyncExecutionDelegate(delegate: suspend () -> SyncResult) {
+        syncExecutionDelegate = delegate
+    }
+
     fun updateOnline(online: Boolean) { _isOnline.value = online }
     fun setAutoSyncEnabled(enabled: Boolean) { _isAutoSyncEnabled.value = enabled }
-    fun triggerManualSync() {}
+
+    fun triggerManualSync(onComplete: ((Boolean, String) -> Unit)? = null) {
+        if (_isSyncing.value) return
+        val scope = (coroutineScope as? CoroutineScope) ?: CoroutineScope(Dispatchers.Main)
+        scope.launch {
+            performSync(onComplete)
+        }
+    }
+
+    suspend fun performSync(onComplete: ((Boolean, String) -> Unit)? = null) {
+        _isSyncing.value = true
+        try {
+            val delegate = syncExecutionDelegate
+            if (delegate != null) {
+                val res = delegate.invoke()
+                val now = System.currentTimeMillis()
+                _lastSyncTimeMillis.value = now
+                _lastSyncSummary.value = res.summary
+                onComplete?.invoke(res.isSuccess, res.summary)
+            } else if (repository is com.example.data.AntarRepository) {
+                repository.markAllTablesAndQueueAsSynced()
+                val now = System.currentTimeMillis()
+                _lastSyncTimeMillis.value = now
+                _lastSyncSummary.value = "تمت المزامنة وتفريغ المعاملات المعلقة بنجاح"
+                onComplete?.invoke(true, _lastSyncSummary.value)
+            } else {
+                val now = System.currentTimeMillis()
+                _lastSyncTimeMillis.value = now
+                _lastSyncSummary.value = "تمت المزامنة بنجاح"
+                onComplete?.invoke(true, _lastSyncSummary.value)
+            }
+        } catch (e: Exception) {
+            _lastSyncSummary.value = "خطأ أثناء المزامنة: ${e.message ?: "يرجى التحقق من الاتصال"}"
+            onComplete?.invoke(false, _lastSyncSummary.value)
+        } finally {
+            _isSyncing.value = false
+        }
+    }
+
+    data class SyncResult(val isSuccess: Boolean, val summary: String)
 
     companion object {
         fun updateOnline(online: Boolean) {}

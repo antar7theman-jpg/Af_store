@@ -64,6 +64,8 @@ import com.example.data.firebase.StaffAccount
 import com.example.data.firebase.StaffAccountRepository
 import com.example.ui.theme.LocalAFStoreSemanticColors
 import com.example.ui.viewmodels.AntarSalesViewModel
+import com.example.utils.AppFormatUtils
+import com.example.utils.toLatinDigits
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -102,7 +104,7 @@ fun LiveSyncStatusCard(
 
     val lastSyncFormatted = remember(lastSyncTime) {
         if (lastSyncTime > 0L) {
-            SimpleDateFormat("HH:mm:ss dd/MM/yyyy", Locale.US).format(Date(lastSyncTime))
+            AppFormatUtils.formatSyncDateTime(lastSyncTime)
         } else {
             "بانتظار الفحص الأولي"
         }
@@ -304,7 +306,7 @@ fun LiveSyncStatusCard(
                     SyncSubsystemItem(
                         icon = Icons.Default.Inventory2,
                         title = "السلع والصور",
-                        value = "${products.size} صنفاً",
+                        value = "${AppFormatUtils.formatInt(products.size)} صنفاً",
                         statusText = "صور Base64 خفيفة ومحدثة",
                         statusColor = semanticColors.success,
                         modifier = Modifier.weight(1f)
@@ -312,7 +314,7 @@ fun LiveSyncStatusCard(
                     SyncSubsystemItem(
                         icon = Icons.Default.ReceiptLong,
                         title = "المخزون والفواتير",
-                        value = if (syncedInvoicesCount > 0) "$syncedInvoicesCount فاتورة" else "${sales.size} عملية",
+                        value = if (syncedInvoicesCount > 0) "${AppFormatUtils.formatInt(syncedInvoicesCount)} فاتورة" else "${AppFormatUtils.formatInt(sales.size)} عملية",
                         statusText = "خصم ذري وتوثيق فوري",
                         statusColor = semanticColors.primary,
                         modifier = Modifier.weight(1f)
@@ -326,7 +328,7 @@ fun LiveSyncStatusCard(
                     SyncSubsystemItem(
                         icon = Icons.Default.GpsFixed,
                         title = "تتبع مواقع GPS",
-                        value = if (syncedLocationsCount > 0) "$syncedLocationsCount موقعاً" else "${workerLocations.size} عمال",
+                        value = if (syncedLocationsCount > 0) "${AppFormatUtils.formatInt(syncedLocationsCount)} موقعاً" else "${AppFormatUtils.formatInt(workerLocations.size)} عمال",
                         statusText = "تحديث دوري وعند البيع",
                         statusColor = Color(0xFF0284C7),
                         modifier = Modifier.weight(1f)
@@ -334,7 +336,7 @@ fun LiveSyncStatusCard(
                     SyncSubsystemItem(
                         icon = Icons.Default.Speed,
                         title = "قائمة الانتظار",
-                        value = if (pendingQueueCount > 0) "$pendingQueueCount معلقة" else "مزامنة تامة ✓",
+                        value = if (pendingQueueCount > 0) "${AppFormatUtils.formatInt(pendingQueueCount)} معلقة" else "مزامنة تامة ✓",
                         statusText = if (pendingQueueCount > 0) "بانتظار الرفع السحابي" else "كل العمليات محفوظة",
                         statusColor = if (pendingQueueCount > 0) semanticColors.debtAmber else semanticColors.success,
                         modifier = Modifier.weight(1f)
@@ -361,7 +363,7 @@ fun LiveSyncStatusCard(
                             modifier = Modifier.size(16.dp)
                         )
                         Text(
-                            text = syncMessage ?: "",
+                            text = (syncMessage ?: "").toLatinDigits(),
                             fontSize = 11.5.sp,
                             color = semanticColors.textPrimary
                         )
@@ -499,25 +501,21 @@ private fun SyncSubsystemItem(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(12.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp)
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+            horizontalAlignment = Alignment.Start
         ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                Icon(
-                    imageVector = icon,
-                    contentDescription = null,
-                    tint = statusColor,
-                    modifier = Modifier.size(18.dp)
-                )
-                Text(
-                    text = title,
-                    fontSize = 11.5.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = semanticColors.textPrimary
-                )
-            }
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = statusColor,
+                modifier = Modifier.size(22.dp)
+            )
+            Text(
+                text = title,
+                fontSize = 11.5.sp,
+                fontWeight = FontWeight.Bold,
+                color = semanticColors.textPrimary
+            )
 
             Text(
                 text = value,

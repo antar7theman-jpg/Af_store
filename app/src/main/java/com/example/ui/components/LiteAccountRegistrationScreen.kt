@@ -34,8 +34,10 @@ import androidx.compose.material.icons.filled.Badge
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.Email
+import androidx.compose.material.icons.filled.HourglassTop
 import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.Phone
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Store
 import androidx.compose.material.icons.filled.Visibility
@@ -84,6 +86,7 @@ import androidx.compose.ui.unit.sp
 import com.example.R
 import com.example.data.firebase.StaffAccount
 import com.example.data.firebase.StaffAccountRepository
+import com.example.data.firebase.StaffApprovalStatus
 import com.example.ui.theme.LocalAFStoreSemanticColors
 import kotlinx.coroutines.launch
 
@@ -114,6 +117,10 @@ fun LiteAccountRegistrationScreen(
     var isSubmitting by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
 
+    var submittedPendingAccount by rememberSaveable { mutableStateOf<StaffAccount?>(null) }
+    var isCheckingStatus by remember { mutableStateOf(false) }
+    var statusCheckMessage by remember { mutableStateOf<String?>(null) }
+
     BackHandler {
         if (!isSubmitting) {
             onBackToLogin()
@@ -122,6 +129,188 @@ fun LiteAccountRegistrationScreen(
 
     val emeraldColor = Color(0xFF059669)
     val emeraldDark = Color(0xFF047857)
+
+    if (submittedPendingAccount != null) {
+        val pendingAcc = submittedPendingAccount!!
+        Scaffold(
+            contentWindowInsets = WindowInsets.systemBars,
+            containerColor = if (semantic.isDark) Color(0xFF0B1120) else Color(0xFFF8FAFC),
+            topBar = {
+                TopAppBar(
+                    title = {
+                        Text(
+                            text = "مراجعة طلب حساب Lite",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 16.sp
+                        )
+                    },
+                    navigationIcon = {
+                        IconButton(onClick = onBackToLogin) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "رجوع")
+                        }
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = if (semantic.isDark) Color(0xFF1E293B) else Color.White
+                    )
+                )
+            }
+        ) { innerPadding ->
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(innerPadding)
+                    .verticalScroll(rememberScrollState())
+                    .padding(16.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Card(
+                    shape = RoundedCornerShape(24.dp),
+                    colors = CardDefaults.cardColors(containerColor = if (semantic.isDark) Color(0xFF1E293B) else Color.White),
+                    border = BorderStroke(1.5.dp, Color(0xFFF59E0B)),
+                    modifier = Modifier.fillMaxWidth().widthIn(max = 500.dp)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(22.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(14.dp)
+                    ) {
+                        Surface(
+                            shape = CircleShape,
+                            color = Color(0xFFF59E0B).copy(alpha = 0.16f),
+                            border = BorderStroke(1.5.dp, Color(0xFFF59E0B)),
+                            modifier = Modifier.size(64.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    imageVector = Icons.Default.HourglassTop,
+                                    contentDescription = null,
+                                    tint = Color(0xFFD97706),
+                                    modifier = Modifier.size(32.dp)
+                                )
+                            }
+                        }
+
+                        Text(
+                            text = "طلبك قيد المراجعة وبانتظار موافقة المالك ⏳",
+                            fontWeight = FontWeight.ExtraBold,
+                            fontSize = 17.sp,
+                            color = Color(0xFFD97706),
+                            textAlign = TextAlign.Center
+                        )
+
+                        Text(
+                            text = "تم إرسال طلب فتح حساب Lite / Offline لمتجر «${pendingAcc.branchName}» بنجاح، ووصل إشعار مباشر لمالك النظام (Deffas Antar). سيتم تفعيل حسابك فور الموافقة عليه.",
+                            fontSize = 12.5.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = TextAlign.Center,
+                            lineHeight = 18.sp
+                        )
+
+                        if (!statusCheckMessage.isNullOrBlank()) {
+                            Surface(
+                                shape = RoundedCornerShape(10.dp),
+                                color = Color(0xFFF59E0B).copy(alpha = 0.12f),
+                                border = BorderStroke(1.dp, Color(0xFFF59E0B).copy(alpha = 0.5f)),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text(
+                                    text = statusCheckMessage.orEmpty(),
+                                    color = Color(0xFFD97706),
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    modifier = Modifier.padding(10.dp),
+                                    textAlign = TextAlign.Center
+                                )
+                            }
+                        }
+
+                        Surface(
+                            shape = RoundedCornerShape(14.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(14.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Text(
+                                    text = "بيانات الطلب المقدم:",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 12.5.sp,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                                Text(
+                                    text = "• المدير: ${pendingAcc.fullName}",
+                                    fontSize = 12.sp,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                                Text(
+                                    text = "• المتجر: ${pendingAcc.branchName}",
+                                    fontSize = 12.sp,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                                Text(
+                                    text = "• الهاتف: ${pendingAcc.phone}",
+                                    fontSize = 12.sp,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                                Text(
+                                    text = "• البريد: ${pendingAcc.email}",
+                                    fontSize = 12.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(4.dp))
+
+                        Button(
+                            onClick = {
+                                isCheckingStatus = true
+                                statusCheckMessage = null
+                                coroutineScope.launch {
+                                    val refreshed = StaffAccountRepository.fetchRemoteStaffAccount(context, pendingAcc.userId)
+                                    isCheckingStatus = false
+                                    if (refreshed != null && refreshed.isApproved) {
+                                        StaffAccountRepository.saveAccountToLocalRegistry(context, refreshed)
+                                        onAccountCreatedAndLoggedIn(refreshed)
+                                    } else if (refreshed != null && refreshed.approvalStatus == StaffApprovalStatus.REJECTED) {
+                                        statusCheckMessage = "نعتذر، لقد تم رفض الطلب من قبل المالك. يمكنك التواصل مع الإدارة."
+                                    } else {
+                                        statusCheckMessage = "الطلب ما زال قيد مراجعة المالك Deffas Antar. يرجى الانتظار قليلاً أو إعادة الفحص لاحقاً."
+                                    }
+                                }
+                            },
+                            enabled = !isCheckingStatus,
+                            shape = RoundedCornerShape(12.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = emeraldColor),
+                            modifier = Modifier.fillMaxWidth().height(48.dp)
+                        ) {
+                            if (isCheckingStatus) {
+                                CircularProgressIndicator(modifier = Modifier.size(20.dp), color = Color.White, strokeWidth = 2.dp)
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("جاري فحص حالة الموافقة...", fontSize = 13.sp, color = Color.White)
+                            } else {
+                                Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("التحقق من موافقة المالك والدخول للبرنامج", fontSize = 13.5.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+
+                        OutlinedButton(
+                            onClick = onBackToLogin,
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.fillMaxWidth().height(44.dp)
+                        ) {
+                            Text("العودة لشاشة الدخول", fontSize = 13.sp)
+                        }
+                    }
+                }
+            }
+        }
+        return
+    }
 
     Scaffold(
         contentWindowInsets = WindowInsets.systemBars,
@@ -237,14 +426,14 @@ fun LiteAccountRegistrationScreen(
                                 }
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(
-                                        text = "حساب Lite / Offline مجاني بالكامل",
+                                        text = "حساب Lite / Offline مجاني",
                                         fontWeight = FontWeight.ExtraBold,
                                         fontSize = 17.5.sp,
                                         color = Color.White
                                     )
                                     Spacer(modifier = Modifier.height(2.dp))
                                     Text(
-                                        text = "تفعيل فوري دون انتظار موافقة المالك - ابدأ البيع الآن",
+                                        text = "يتطلب موافقة المالك - إرسال الطلب للاعتماد",
                                         fontSize = 12.sp,
                                         fontWeight = FontWeight.Medium,
                                         color = Color.White.copy(alpha = 0.95f)
@@ -272,7 +461,7 @@ fun LiteAccountRegistrationScreen(
                                         modifier = Modifier.size(15.dp)
                                     )
                                     Text(
-                                        text = "تفعيل فوري تلقائي",
+                                        text = "إشعار فوري للمالك",
                                         color = Color.White,
                                         fontSize = 11.sp,
                                         fontWeight = FontWeight.Bold
@@ -306,7 +495,7 @@ fun LiteAccountRegistrationScreen(
                                         modifier = Modifier.size(15.dp)
                                     )
                                     Text(
-                                        text = "إشعار شفاف للمالك",
+                                        text = "موافقة المالك مطلوبة",
                                         color = Color.White,
                                         fontSize = 11.sp,
                                         fontWeight = FontWeight.Bold
@@ -582,7 +771,7 @@ fun LiteAccountRegistrationScreen(
                                     isSubmitting = false
                                     if (result.isSuccess) {
                                         val account = result.getOrThrow()
-                                        onAccountCreatedAndLoggedIn(account)
+                                        submittedPendingAccount = account
                                     } else {
                                         errorMessage = result.exceptionOrNull()?.localizedMessage
                                             ?: "تعذر إنشاء الحساب، يرجى التحقق من الاتصال والمحاولة لاحقاً"
@@ -607,7 +796,7 @@ fun LiteAccountRegistrationScreen(
                                 )
                                 Spacer(modifier = Modifier.width(10.dp))
                                 Text(
-                                    text = "جاري تفعيل الحساب فورياً وإشعار المالك...",
+                                    text = "جاري إرسال الطلب وإشعار المالك...",
                                     fontSize = 13.5.sp,
                                     fontWeight = FontWeight.Bold,
                                     color = Color.White
@@ -621,7 +810,7 @@ fun LiteAccountRegistrationScreen(
                                 )
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Text(
-                                    text = "تفعيل الحساب فوراً والدخول للبرنامج",
+                                    text = "إرسال طلب فتح الحساب للمالك",
                                     fontWeight = FontWeight.ExtraBold,
                                     fontSize = 15.5.sp,
                                     color = Color.White
@@ -648,7 +837,7 @@ fun LiteAccountRegistrationScreen(
                                     modifier = Modifier.size(16.dp)
                                 )
                                 Text(
-                                    text = "حسابات Lite مجانية بالكامل ولا تحتاج لموافقة المالك. سيصل إشعار فوري للمالك بمعلومات تسجيلك لتوثيق المتجر فقط.",
+                                    text = "حسابات Lite مجانية بالكامل وتتطلب موافقة المالك (Deffas antar) على الطلب. سيصل إشعار فوري للمالك بطلبك ليقوم بالموافقة عليه وتفعيل حسابك.",
                                     fontSize = 11.sp,
                                     fontWeight = FontWeight.Medium,
                                     color = if (semantic.isDark) Color(0xFFA7F3D0) else Color(0xFF065F46)

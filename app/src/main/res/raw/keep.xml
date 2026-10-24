@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources xmlns:tools="http://schemas.android.com/tools"
+    tools:keep="@drawable/af_store_logo,@drawable/ic_launcher*,@mipmap/ic_launcher*"
+    tools:shrinkMode="strict" />

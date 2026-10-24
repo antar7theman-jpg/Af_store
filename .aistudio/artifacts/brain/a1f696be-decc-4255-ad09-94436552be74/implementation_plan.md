@@ -1,100 +1,112 @@
-# Harmonious Printer Power Toggle & Mobile Viewport Performance Optimization
+# خطة عمل: شرط موافقة المالك/المدير لاعتماد حسابات Lite / Offline وإشعار المالك
 
-Implementation plan to redesign the printer power/toggle button in the printer settings section with clean alignment and high-contrast tactile feedback, while optimizing portrait phone frame adaptation, window insets, and command responsiveness.
+خطة معمارية لتعديل آلية تسجيل حسابات **Lite / Offline** بحيث تتطلب موافقة المالك/المدير مسبقاً قبل التفعيل، مع وصول إشعار للمالك، وعرض شاشة انتظار قيد المراجعة للمستخدم.
 
-## User Review & Critical Decisions
+---
+
+## مراجعة المستخدم والقرارات المؤكدة (User Review & Confirmed Decisions)
 
 > [!IMPORTANT]
-> The following design decisions were confirmed by the user:
-> - **Printer Power Switch Scope**: Focus specifically on the printer settings section (`DesktopPrinterSettingsCard` and `ThermalPrinterSettingsCard` inside Settings).
-> - **Screen Adaptability & Performance**: Optimize vertical portrait smartphone layouts, ensuring graceful edge-to-edge frame adaptation (notch, gesture pill, status bars) and immediate, lag-free command button responsiveness.
+> تم تأكيد القرارات التالية بناءً على إجابات المستخدم:
+> 1. **طريقة الإشعار والإدارة للمالك:** وصول إشعار وتنبيه داخل التطبيق وقائمة طلبات في شاشة إدارة الحسابات والمدراء (`PendingManagerRequestsDialog`).
+> 2. **حالة المستخدم أثناء الانتظار:** عرض شاشة انتظار مخصصة وواضحة توضح أن "الطلب قيد المراجعة وبانتظار موافقة المالك/المدير"، مع إمكانية تحديث الحالة أو العودة.
+> 3. **بيانات التسجيل المطلوبة:** الاسم الكامل، رقم الهاتف، واسم المتجر أو النشاط التجاري (بالإضافة للرمز السري للحساب).
 
 ---
 
-## 1. Overview & Core Concept
+## 1. نظرة عامة والهدف الأساسي (Overview & Core Concept)
 
-1. **Harmonious Printer Power Toggle ("زر إشعال / تشغيل الطابعة")**:
-   - Redesign the master power toggle in `DesktopPrinterSettingsCard` and `ThermalPrinterSettingsCard` into a dedicated, beautifully balanced control card.
-   - Feature clear status indicators: Active green badge with `Icons.Default.PowerSettingsNew` ("مشتعلة / مفعلة") vs. Standby gray outline ("متوقفة"), with balanced padding, a custom Switch/Button, and intuitive touch target (>= 48.dp).
-   - Eliminate awkward crowding between the switch and the expand/collapse chevron.
-
-2. **Mobile Screen & Frame Adaptation (Phone Frames & Insets)**:
-   - Audit top-level and dialog layouts for proper `WindowInsets.safeDrawing`, `statusBarsPadding()`, and `navigationBarsPadding()` so punch-holes, curved corners, and Android gesture bars never clip cards or buttons.
-   - Use fluid `fillMaxWidth()` with standard 8dp/12dp spacing and container-based sizing to adapt cleanly across compact (360dp-380dp) and standard (390dp-430dp) modern phone viewports.
-
-3. **Command Execution Speed & Responsiveness**:
-   - Provide immediate tactile feedback (`MutableInteractionSource` with instant ripple and visual state change) on buttons.
-   - Optimize state management in ViewModels and Composables (avoiding expensive recompositions on high-frequency UI flows) to ensure snappy response times.
+- **المشكلة الحالية:** كانت حسابات Lite / Offline تتفعل تلقائياً وفورياً (`APPROVED`) دون اشتراط موافقة المالك.
+- **الحل الجديد:**
+  - تحويل حالة حسابات Lite الجديدة عند إنشائها إلى **قيد المراجعة** (`StaffApprovalStatus.PENDING`).
+  - إرسال طلب تسجيل الحساب مع تفاصيل المتجر ورقم الهاتف إلى السجل السحابي/المشترك للمالك (Firestore / Shared Registry).
+  - إطلاق إشعار وتنبيه للمالك في التطبيق بوجود طلب حساب Lite جديد بانتظار البت فيه.
+  - إدراج طلبات Lite ضمن نافذة مراجعة طلبات المدراء (`PendingManagerRequestsDialog`) لتمكين المالك من **القبول** (تفعيل الحساب) أو **الرفض** (حذف الطلب).
+  - إظهار شاشة انتظار للمستخدم ("حسابك قيد المراجعة") فور إرسال الطلب، تمنعه من الدخول حتى اعتماد المالك.
 
 ---
 
-## 2. User Experience & Visual Design
+## 2. تجربة المستخدم والتصميم البصري (User Experience & Visual Design)
 
-### Printer Toggle & Settings Card Layout
+### أ. شاشة تسجيل حساب Lite (`LiteAccountRegistrationScreen`)
+- تعديل العناوين والشارات: استبدال نصوص "تفعيل فوري تلقائي" بـ "يتطلب موافقة المالك".
+- زر الإرسال: "إرسال طلب فتح الحساب للمالك".
+- بطاقة الإرشادات: توضيح أن الحساب مجاني ولكن يحتاج اعتماد المالك لحماية النظام وتوثيق المتاجر.
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│ 🖨️  طابعة الفواتير والمستندات (Desktop / Thermal)           │
-├─────────────────────────────────────────────────────────────┤
-│                                                             │
-│ ┌─────────────────────────────────────────────────────────┐ │
-│ │  ⚡ حالة تشغيل الطابعة                     [ مشتعلة ✓ ]  │ │
-│ │  انقر لإشعال أو إيقاف اتصال ومحرك الطباعة  (Switch ON)  │ │
-│ └─────────────────────────────────────────────────────────┘ │
-│                                                             │
-│  ▼ إعدادات المقاس، الهوامش، والتوصيل                        │
-└─────────────────────────────────────────────────────────────┘
-```
+### ب. شاشة انتظار المراجعة (`LitePendingApprovalGateScreen`)
+- تصميم مريح ومتناسق مع هوية التطبيق (Emerald / Dark Mode):
+  - أيقونة ساعة رملية / مراجعة (`Icons.Default.HourglassTop` أو `PendingActions`).
+  - نص ترحيبي باسم المستخدم والمتجر: *"تم استلام طلبك لمتجر «اسم المتجر»، الطلب حالياً بانتظار مراجعة وموافقة المالك Deffas Antar"*.
+  - زر "تحديث الحالة والتحقق من الموافقة" (`RefreshStatus`).
+  - زر "العودة لتسجيل الدخول".
 
-- **Power Toggle Section**:
-  - Encapsulated in a dedicated highlight container with a soft primary/green border.
-  - Right: Power icon (`PowerSettingsNew`) with title "تشغيل الطابعة" and descriptive subtitle.
-  - Left: Prominent state badge ("مشتعلة ✓" in emerald / "متوقفة" in slate) paired seamlessly with a smooth M3 Switch.
-  - Touch target meets accessibility minimum (48dp height).
-
-- **Portrait Screen Adaptation**:
-  - Full support for edge-to-edge without overflow or cutoffs.
-  - Smooth vertical scrolling with `imePadding()` on forms to prevent keyboards from hiding action buttons.
+### ج. لوحة تحكم المالك وإدارة الطلبات (`PendingManagerRequestsDialog`)
+- شارة مميزة لطلبات Lite المجانية (`Lite / Offline Badge`) بلون أخضر زمردي مميز.
+- عرض بيانات صاحب الطلب: الاسم، رقم الهاتف، اسم النشاط/الفرع، وتاريخ التقديم.
+- زران واضحان لكل طلب:
+  - **قبول وتفعيل (Approve):** يحول الحالة إلى `APPROVED` ويسمح للمستخدم بالدخول فوراً.
+  - **رفض الطلب (Reject):** يرفض الطلب ويزيله مع إشعار للمالك.
 
 ---
 
-## 3. Technical Architecture & Modifications
+## 3. القرارات التقنية والمعمارية (Key Architectural Decisions)
+
+1. **حالة الاعتماد في نموذج البيانات (`StaffAccount`):**
+   - تعيين `approvalStatus = StaffApprovalStatus.PENDING` و `isPending = true` عند إنشاء حساب Lite في `StaffAccountRepository.createLiteManagerAccount`.
+   - تسجيل الحساب في Firestore ضمن مجموعة الحسابات السحابية ومزامنة الحالة بحيث يراها المالك فوراً.
+
+2. **قنوات الإشعار للمالك:**
+   - تحديث `MainActivity.kt` ليعكس عداد الطلبات المعلقة شاملاً طلبات المدراء العاديين وطلبات حسابات Lite.
+   - إظهار شريط تنبيه فوري (`viewModel.showStatusMessage`) للمالك عند رصد طلب Lite جديد.
+
+3. **حفظ ومزامنة الجلسة:**
+   - في حال كان الحساب في حالة `PENDING`، يتم توجيه التطبيق لشاشة `PendingApprovalGate` بدلاً من الدخول لواجهات نقطة البيع والمخزون.
+
+---
+
+## 4. المخطط الهيكلي للنظام (System Flow Diagram)
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│             ReportsAndSettingsScreens.kt                     │
-│  - Settings screen portrait layout & safe insets auditing   │
-│  - Pass active printer states and reactive toggle callbacks  │
-└─────────────────────────────────────────────────────────────┘
-                               │
-                               ▼
-┌─────────────────────────────────────────────────────────────┐
-│           UiScreenStubsAndComponents.kt                      │
-│  - Redesign DesktopPrinterSettingsCard master switch        │
-│  - Redesign ThermalPrinterSettingsCard power/active toggle   │
-│  - Harmonize spacing, badge contrast, and chevron controls  │
-└─────────────────────────────────────────────────────────────┘
-                               │
-                               ▼
-┌─────────────────────────────────────────────────────────────┐
-│                 MainActivity.kt & Theme.kt                  │
-│  - Ensure edge-to-edge insets & frame safe-areas on phones  │
-│  - Fast interaction ripples & lightweight layout hierarchy  │
-└─────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────┐
+│ المستخدم يملأ بيانات حساب Lite  │
+│ (الاسم، الهاتف، اسم المتجر)     │
+└────────────────┬────────────────┘
+                 │ ضغط "إرسال الطلب"
+                 ▼
+┌─────────────────────────────────┐
+│ حفظ الحساب بحالة PENDING        │
+│ إرسال البيانات للمالك سحابياً    │
+└────────────────┬────────────────┘
+                 │
+       ┌─────────┴─────────┐
+       ▼                   ▼
+┌──────────────┐    ┌─────────────────────────────────┐
+│ شاشة انتظار  │    │ إشعار المالك داخل التطبيق        │
+│ للمستخدم     │    │ ظهور الطلب في قائمة إدارة المدراء│
+└──────┬───────┘    └──────────────┬──────────────────┘
+       │                           │
+       │                   ┌───────┴───────┐
+       │                   ▼               ▼
+       │               [رفض ❌]         [موافقة ✓]
+       │                   │               │
+       ▼                   ▼               ▼
+┌──────────────┐    ┌──────────────┐ ┌────────────────┐
+│ إشعار بالرفض │    │ حذف الطلب    │ │ تفعيل الحساب   │
+│ وحذف الحساب  │    └──────────────┘ │ السماح بالدخول │
+└──────────────┘                     └────────────────┘
 ```
 
-### Key Implementation Steps:
+---
 
-1. **`UiScreenStubsAndComponents.kt`**:
-   - Redesign `DesktopPrinterSettingsCard` header and power section:
-     - Separate the power switch into a dedicated, clean, full-width status row with `PowerSettingsNew` icon, live Arabic status label, and M3 `Switch`.
-     - Align the expand/collapse chevron neatly as a secondary affordance.
-   - In `ThermalPrinterSettingsCard`, provide an equivalent prominent power/connection toggle row so thermal and desktop printers share the exact same harmonious visual language.
+## 5. خطوات التنفيذ بعد الموافقة (Execution Steps)
 
-2. **`ReportsAndSettingsScreens.kt` & Phone Frame Adaptation**:
-   - Ensure `LazyColumn` and inner cards respect device bounds with `navigationBarsPadding()` and `WindowInsets.systemBars`.
-   - Prevent horizontal clipping on smaller phone screens (< 380dp) using `widthIn` and flexible weights.
-
-3. **Verification**:
-   - Run `compile_applet` to ensure pristine compilation.
-   - Verify layout responsiveness and state transitions.
+1. **تحديث منطق إنشاء حساب Lite (`StaffAccountRepository.kt`):**
+   - ضبط `approvalStatus` كـ `PENDING` لحسابات Lite الجديدة وتخزينها في مسار الطلبات المشترك.
+2. **تحديث شاشة التسجيل (`LiteAccountRegistrationScreen.kt`):**
+   - استبدال نصوص التفعيل الفوري بعبارات طلب الاعتماد، وتوجيه المستخدم لشاشة الانتظار عند نجاح الإرسال.
+3. **توفير شاشة انتظار المراجعة (`LitePendingApprovalGateScreen`):**
+   - عرض تفاصيل الطلب وزر فحص الموافقة والعودة.
+4. **تحديث قائمة طلبات المالك (`PendingManagerRequestsDialog.kt`):**
+   - دعم اعتماد ورفض حسابات Lite وإطلاق إشعار للمالك عند وصول طلب جديد.
+5. **الفحص والتحقق (`compile_applet`):**
+   - التأكد من سلامة التجميع واكتمال مسار التسجيل والاعتماد.

@@ -837,6 +837,7 @@ class LiveInventorySyncManager(
                 _syncedLocationsCount.value = locationsCount
             }
 
+            repository.markAllTablesAndQueueAsSynced()
             val now = System.currentTimeMillis()
             _lastSyncTimestamp.value = now
             _isComprehensiveSyncing.value = false

@@ -70,7 +70,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.models.SyncQueueItem
+import com.example.utils.AppFormatUtils
 import com.example.utils.OfflineSyncManager
+import com.example.utils.toLatinDigits
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -108,7 +110,7 @@ fun SyncStatusChip(
     val statusLabel = when {
         isSyncing -> "جاري المزامنة..."
         !isOnline -> "أوفلاين"
-        pendingQueueCount > 0 -> "معلق ($pendingQueueCount)"
+        pendingQueueCount > 0 -> "معلق (${AppFormatUtils.formatInt(pendingQueueCount)})"
         isAutoSyncEnabled -> "مزامنة آلية"
         else -> "متصل ومزامن"
     }
@@ -172,7 +174,7 @@ fun SyncStatusChip(
                 ) {
                     Box(contentAlignment = Alignment.Center) {
                         Text(
-                            text = if (pendingQueueCount > 99) "99+" else pendingQueueCount.toString(),
+                            text = if (pendingQueueCount > 99) "99+" else AppFormatUtils.formatInt(pendingQueueCount),
                             fontSize = 9.5.sp,
                             fontWeight = FontWeight.ExtraBold,
                             color = Color.White
@@ -267,7 +269,7 @@ fun TopBarAutoSyncButton(
                 ) {
                     Box(contentAlignment = Alignment.Center) {
                         Text(
-                            text = if (pendingQueueCount > 99) "99+" else pendingQueueCount.toString(),
+                            text = if (pendingQueueCount > 99) "99+" else AppFormatUtils.formatInt(pendingQueueCount),
                             fontSize = 8.5.sp,
                             fontWeight = FontWeight.Bold,
                             color = Color.White
@@ -305,7 +307,7 @@ fun SyncDetailsModalSheet(
     val lastSyncSummary by syncManager.lastSyncSummary.collectAsState()
 
     val formattedLastSync = remember(lastSyncTimeMillis) {
-        SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date(lastSyncTimeMillis))
+        AppFormatUtils.formatSyncDateTime(lastSyncTimeMillis)
     }
 
     ModalBottomSheet(
@@ -454,7 +456,7 @@ fun SyncDetailsModalSheet(
                             color = MaterialTheme.colorScheme.onSurface
                         )
                         Text(
-                            text = if (pendingQueueCount == 0) "مكتملة ومزامنة بالكامل" else "$pendingQueueCount معاملة معلقة",
+                            text = if (pendingQueueCount == 0) "مكتملة ومزامنة بالكامل" else "${AppFormatUtils.formatInt(pendingQueueCount)} معاملة معلقة",
                             fontSize = 13.sp,
                             fontWeight = FontWeight.ExtraBold,
                             color = if (pendingQueueCount == 0) Color(0xFF059669) else Color(0xFFD97706)
@@ -480,7 +482,7 @@ fun SyncDetailsModalSheet(
                     }
 
                     Text(
-                        text = lastSyncSummary,
+                        text = lastSyncSummary.toLatinDigits(),
                         fontSize = 11.5.sp,
                         color = MaterialTheme.colorScheme.primary,
                         fontWeight = FontWeight.Medium

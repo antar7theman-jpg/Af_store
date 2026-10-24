@@ -340,7 +340,7 @@ fun AFStoreMainApp(
         var lastNotifiedPendingCount by rememberSaveable { mutableStateOf(0) }
         LaunchedEffect(pendingStaffCount, myStaffAccount.isOwner) {
             if (myStaffAccount.isOwner && pendingStaffCount > lastNotifiedPendingCount && pendingStaffCount > 0) {
-                viewModel.showStatusMessage("🔔 تنبيه للمالك: لديك $pendingStaffCount طلب حساب جديد (بما في ذلك طلبات Pro التجريبية 7 أيام) بانتظار قرار القبول أو الرفض.")
+                viewModel.showStatusMessage("🔔 تنبيه للمالك: لديك $pendingStaffCount طلب حساب جديد (حسابات Lite مجانية أو Pro تجريبية) بانتظار قرار القبول أو الرفض.")
             }
             lastNotifiedPendingCount = pendingStaffCount
         }
@@ -352,7 +352,12 @@ fun AFStoreMainApp(
                 val latestLite = allStaffAccounts.firstOrNull { it.syncMode == "lite" }
                 val storeInfo = if (latestLite != null && latestLite.branchName.isNotBlank()) " لمتجر «${latestLite.branchName}»" else ""
                 val managerInfo = if (latestLite != null && latestLite.fullName.isNotBlank()) " (${latestLite.fullName})" else ""
-                viewModel.showStatusMessage("🏪 إشعار للمالك: قام مستخدم جديد بفتح حساب Lite / offline مجاني$storeInfo$managerInfo وتفعيله تلقائياً.")
+                val isPending = latestLite?.approvalStatus == StaffApprovalStatus.PENDING || latestLite?.isPending == true
+                if (isPending) {
+                    viewModel.showStatusMessage("🏪 إشعار للمالك: طلب جديد لفتح حساب Lite / Offline مجاني$storeInfo$managerInfo بانتظار قرار الموافقة أو الرفض.")
+                } else {
+                    viewModel.showStatusMessage("🏪 إشعار للمالك: تم اعتماد حساب Lite / Offline مجاني$storeInfo$managerInfo بنجاح.")
+                }
             }
             lastNotifiedLiteCount = currentLiteCount
         }

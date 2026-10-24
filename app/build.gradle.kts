@@ -46,9 +46,12 @@ android {
 
   buildTypes {
     release {
-      isCrunchPngs = false
+      isCrunchPngs = true
       isMinifyEnabled = true
       isShrinkResources = true
+      ndk {
+        abiFilters += listOf("arm64-v8a", "armeabi-v7a")
+      }
       proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
       // Do not remove or modify this signingConfig assignment. It is necessary for Android apps in
       // AI Studio.
@@ -60,6 +63,34 @@ android {
       // Do not remove or modify this signingConfig assignment. It is necessary for Android apps in
       // AI Studio.
       signingConfig = signingConfigs.getByName("debugConfig")
+    }
+  }
+  bundle {
+    language {
+      enableSplit = true
+    }
+    density {
+      enableSplit = true
+    }
+    abi {
+      enableSplit = true
+    }
+  }
+  packaging {
+    resources {
+      excludes += setOf(
+        "/META-INF/{AL2.0,LGPL2.1}",
+        "/META-INF/DEPENDENCIES",
+        "/META-INF/LICENSE*",
+        "/META-INF/NOTICE*",
+        "/META-INF/*.kotlin_module",
+        "/META-INF/versions/9/previous-compilation-data.bin",
+        "DebugProbesKt.bin",
+        "kotlin-tooling-metadata.json"
+      )
+    }
+    jniLibs {
+      useLegacyPackaging = false
     }
   }
   compileOptions {
@@ -102,15 +133,15 @@ dependencies {
   implementation(libs.androidx.lifecycle.runtime.compose)
   implementation(libs.androidx.lifecycle.runtime.ktx)
   implementation(libs.androidx.lifecycle.viewmodel.compose)
-  implementation(libs.androidx.navigation.compose)
+  // implementation(libs.androidx.navigation.compose)
   implementation(libs.androidx.room.ktx)
   implementation(libs.androidx.room.runtime)
   implementation(libs.androidx.datastore.preferences)
   implementation(libs.coil.compose)
   implementation(libs.kotlinx.coroutines.android)
   implementation(libs.kotlinx.coroutines.core)
-  implementation(libs.okhttp)
-  implementation(libs.logging.interceptor)
+  // implementation(libs.okhttp)
+  // implementation(libs.logging.interceptor)
   implementation(libs.androidx.camera.core)
   implementation(libs.androidx.camera.camera2)
   implementation(libs.androidx.camera.lifecycle)
@@ -123,8 +154,9 @@ dependencies {
   implementation(libs.androidx.credentials.play.services)
   implementation(libs.googleid)
   implementation("androidx.work:work-runtime-ktx:2.10.0")
-  implementation("com.google.mlkit:text-recognition:16.0.1")
-  implementation("com.google.mlkit:barcode-scanning:17.3.0")
+  // Use Play Services dynamic ML Kit modules instead of bundled 85MB native binaries
+  implementation("com.google.android.gms:play-services-mlkit-text-recognition:19.0.1")
+  implementation("com.google.android.gms:play-services-mlkit-barcode-scanning:18.3.1")
   implementation("com.patrykandpatryk.vico:compose:1.15.0")
   implementation("com.patrykandpatryk.vico:compose-m3:1.15.0")
   implementation("com.patrykandpatryk.vico:core:1.15.0")

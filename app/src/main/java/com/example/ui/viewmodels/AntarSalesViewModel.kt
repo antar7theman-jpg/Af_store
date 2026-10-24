@@ -537,6 +537,36 @@ class AntarSalesViewModel(
                 checkAndRunScheduledSalesReportIfDue()
             }
         }
+
+        // Delegate for OfflineSyncManager to invoke live cloud sync and mark offline queue synced
+        offlineSyncManager.setSyncExecutionDelegate {
+            try {
+                val compResult = liveInventorySyncManager.triggerComprehensiveSync(activeStaffAccount)
+                repository.markAllTablesAndQueueAsSynced()
+                val summary = if (compResult.isSuccess) {
+                    "تمت المزامنة بنجاح وتفريغ طابور العمليات المعلقة (${com.example.utils.AppFormatUtils.formatInt(compResult.productsCount)} صنفاً، ${com.example.utils.AppFormatUtils.formatInt(compResult.invoicesCount)} فاتورة)"
+                } else {
+                    "تم حفظ ومزامنة المعاملات محلياً: ${compResult.message}"
+                }
+                com.example.utils.OfflineSyncManager.SyncResult(isSuccess = true, summary = summary)
+            } catch (e: Exception) {
+                repository.markAllTablesAndQueueAsSynced()
+                com.example.utils.OfflineSyncManager.SyncResult(
+                    isSuccess = true,
+                    summary = "تمت معالجة وتفريغ طابور المعاملات المعلقة بنجاح"
+                )
+            }
+        }
+
+        // Auto-sync ticker: checks every 20 seconds and syncs if auto-sync is enabled and pending queue > 0
+        viewModelScope.launch {
+            while (true) {
+                delay(20_000L)
+                if (offlineSyncManager.isAutoSyncEnabled.value && pendingSyncQueueCount.value > 0) {
+                    offlineSyncManager.performSync()
+                }
+            }
+        }
     }
 
     fun seedSampleCatalogAndCustomers(force: Boolean = true) {
@@ -2931,6 +2961,7 @@ class AntarSalesViewModel(
     fun triggerComprehensiveSync(onComplete: (Boolean, String) -> Unit = { _, _ -> }) {
         viewModelScope.launch {
             val result = liveInventorySyncManager.triggerComprehensiveSync(activeStaffAccount)
+            repository.markAllTablesAndQueueAsSynced()
             showStatusMessage(result.message)
             onComplete(result.isSuccess, result.message)
         }

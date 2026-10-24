@@ -1400,7 +1400,7 @@ class StaffAccountRepository(
                 phone = cleanPhone,
                 requestedRole = "manager",
                 role = "manager",
-                approvalStatus = StaffApprovalStatus.APPROVED,
+                approvalStatus = StaffApprovalStatus.PENDING,
                 branchName = cleanStore,
                 secretPin = cleanPin,
                 isTrial = false,
@@ -1441,8 +1441,8 @@ class StaffAccountRepository(
                     managerEmail = cleanEmail,
                     phone = cleanPhone,
                     branchName = cleanStore,
-                    status = "LITE_ACCOUNT_CREATED",
-                    note = "فتح حساب Lite / offline مجاني فورياً دون طلب موافقة" + (if (cleanBiz.isNotBlank()) " - نشاط: $cleanBiz" else ""),
+                    status = "PENDING",
+                    note = "طلب فتح حساب Lite / offline مجاني - بانتظار موافقة المالك" + (if (cleanBiz.isNotBlank()) " - نشاط: $cleanBiz" else ""),
                     requestedAt = Timestamp.now()
                 )
                 db.collection(COLLECTION_PRO_UPGRADE_REQUESTS).document(docId).set(notif.toFirestorePayload()).await()
@@ -1451,6 +1451,16 @@ class StaffAccountRepository(
             }
 
             return Result.success(liteManager)
+        }
+
+        suspend fun fetchRemoteStaffAccount(context: Context, docId: String): StaffAccount? {
+            return try {
+                val db = getFirestoreDb(context)
+                val snap = db.collection(COLLECTION_STAFF).document(docId).get().await()
+                if (snap.exists()) StaffAccount.fromSnapshot(snap) else null
+            } catch (_: Exception) {
+                null
+            }
         }
     }
 
@@ -1649,7 +1659,9 @@ class StaffAccountRepository(
         approvedByName: String = OWNER_FULL_NAME,
         asTrial7Days: Boolean = targetAccount.isTrial
     ): Result<StaffAccount> {
-        val trialEnds = if (asTrial7Days) {
+        val isLite = targetAccount.syncMode == "lite"
+        val effectiveSyncMode = if (isLite) "lite" else "pro"
+        val trialEnds = if (!isLite && asTrial7Days) {
             System.currentTimeMillis() + (7L * 24 * 3600 * 1000L)
         } else {
             0L
@@ -1657,9 +1669,9 @@ class StaffAccountRepository(
         val updated = targetAccount.copy(
             approvalStatus = StaffApprovalStatus.APPROVED,
             role = "manager",
-            isTrial = asTrial7Days,
+            isTrial = if (isLite) false else asTrial7Days,
             trialEndsAtMillis = trialEnds,
-            syncMode = "pro",
+            syncMode = effectiveSyncMode,
             approvedByUid = approvedByUid.ifBlank { "owner_deffas_antar" },
             approvedByName = approvedByName.ifBlank { OWNER_FULL_NAME },
             canMakeSales = true,
@@ -1669,8 +1681,8 @@ class StaffAccountRepository(
             canManageDebtsAndCustomers = true,
             canRefundOrVoid = true,
             canApplyDiscounts = true,
-            canViewCostPrices = true,
-            canExportData = true,
+            canViewCostPrices = !isLite,
+            canExportData = !isLite,
             canManagePurchaseInvoices = true,
             updatedAt = Timestamp.now()
         )
@@ -1678,9 +1690,9 @@ class StaffAccountRepository(
         val updates = mutableMapOf<String, Any>(
             "approvalStatus" to StaffApprovalStatus.APPROVED,
             "role" to "manager",
-            "isTrial" to asTrial7Days,
+            "isTrial" to (if (isLite) false else asTrial7Days),
             "trialEndsAtMillis" to trialEnds,
-            "syncMode" to "pro",
+            "syncMode" to effectiveSyncMode,
             "approvedByUid" to approvedByUid.ifBlank { "owner_deffas_antar" },
             "approvedByName" to approvedByName.ifBlank { OWNER_FULL_NAME },
             "canMakeSales" to true,
@@ -1690,8 +1702,8 @@ class StaffAccountRepository(
             "canManageDebtsAndCustomers" to true,
             "canRefundOrVoid" to true,
             "canApplyDiscounts" to true,
-            "canViewCostPrices" to true,
-            "canExportData" to true,
+            "canViewCostPrices" to !isLite,
+            "canExportData" to !isLite,
             "canManagePurchaseInvoices" to true,
             "updatedAt" to FieldValue.serverTimestamp()
         )
