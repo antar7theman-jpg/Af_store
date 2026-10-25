@@ -733,9 +733,9 @@ fun SettingsScreen(
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
-            .padding(horizontal = 14.dp, vertical = 8.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp),
-        contentPadding = PaddingValues(bottom = 80.dp)
+            .padding(14.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+        contentPadding = PaddingValues(bottom = 40.dp)
     ) {
         if (currentUser?.isOwner == true || myStaffAccount?.isOwner == true) {
             item {
@@ -2100,7 +2100,7 @@ private fun LocalDatabaseBackupCard(
         if (lastBackupTime <= 0L) {
             "لم يتم إنشاء نسخة بعد"
         } else {
-            "آخر نسخة: " + SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US).format(Date(lastBackupTime))
+            "آخر نسخة: " + SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(lastBackupTime))
         }
     }
 
@@ -2330,105 +2330,58 @@ private fun LocalDatabaseBackupCard(
                         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                             encryptedBackups.take(5).forEach { encBackup ->
                                 Surface(
-                                    shape = RoundedCornerShape(12.dp),
+                                    shape = RoundedCornerShape(10.dp),
                                     color = MaterialTheme.colorScheme.surface,
-                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.7f)),
+                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)),
                                     modifier = Modifier.fillMaxWidth()
                                 ) {
-                                    Column(
+                                    Row(
                                         modifier = Modifier
                                             .fillMaxWidth()
-                                            .padding(10.dp),
-                                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                                            .padding(8.dp),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
                                     ) {
-                                        // Header Row: Badge on right/start, Date (Western digits) on left/end
-                                        Row(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            horizontalArrangement = Arrangement.SpaceBetween,
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
-                                            Surface(
-                                                shape = RoundedCornerShape(6.dp),
-                                                color = if (encBackup.isAuto) Color(0xFF0284C7).copy(alpha = 0.12f) else Color(0xFF10B981).copy(alpha = 0.12f),
-                                                border = BorderStroke(1.dp, if (encBackup.isAuto) Color(0xFF0284C7).copy(alpha = 0.35f) else Color(0xFF10B981).copy(alpha = 0.35f))
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(4.dp)
                                             ) {
+                                                Surface(
+                                                    shape = RoundedCornerShape(4.dp),
+                                                    color = if (encBackup.isAuto) Color(0xFF38BDF8).copy(alpha = 0.15f) else Color(0xFF10B981).copy(alpha = 0.15f)
+                                                ) {
+                                                    Text(
+                                                        text = if (encBackup.isAuto) "تلقائي يومي" else "يدوي فوري",
+                                                        fontSize = 9.5.sp,
+                                                        fontWeight = FontWeight.Bold,
+                                                        color = if (encBackup.isAuto) Color(0xFF0284C7) else Color(0xFF10B981),
+                                                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                                                    )
+                                                }
                                                 Text(
-                                                    text = if (encBackup.isAuto) "تلقائي يومي" else "يدوي فوري",
-                                                    fontSize = 10.sp,
-                                                    fontWeight = FontWeight.Bold,
-                                                    color = if (encBackup.isAuto) Color(0xFF0284C7) else Color(0xFF10B981),
-                                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                                    text = encBackup.formattedDate,
+                                                    fontSize = 12.sp,
+                                                    fontWeight = FontWeight.Bold
                                                 )
                                             }
-
                                             Text(
-                                                text = encBackup.formattedDate,
-                                                fontSize = 12.sp,
-                                                fontWeight = FontWeight.ExtraBold,
-                                                color = MaterialTheme.colorScheme.onSurface
+                                                text = "${encBackup.fileName} • ${encBackup.formattedSize} • SHA-256 ✓",
+                                                fontSize = 10.sp,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
                                             )
                                         }
 
-                                        // File Info Container
-                                        Surface(
-                                            shape = RoundedCornerShape(8.dp),
-                                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
-                                            modifier = Modifier.fillMaxWidth()
-                                        ) {
-                                            Column(
-                                                modifier = Modifier
-                                                    .fillMaxWidth()
-                                                    .padding(horizontal = 8.dp, vertical = 6.dp),
-                                                verticalArrangement = Arrangement.spacedBy(3.dp)
-                                            ) {
-                                                Text(
-                                                    text = encBackup.fileName,
-                                                    fontSize = 10.5.sp,
-                                                    fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
-                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                    maxLines = 1,
-                                                    overflow = TextOverflow.Ellipsis
-                                                )
-                                                Row(
-                                                    modifier = Modifier.fillMaxWidth(),
-                                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                                    verticalAlignment = Alignment.CenterVertically
-                                                ) {
-                                                    Text(
-                                                        text = "حجم الملف: ${encBackup.formattedSize}",
-                                                        fontSize = 10.5.sp,
-                                                        fontWeight = FontWeight.Bold,
-                                                        color = MaterialTheme.colorScheme.onSurface
-                                                    )
-                                                    Text(
-                                                        text = "✓ SHA-256",
-                                                        fontSize = 10.sp,
-                                                        fontWeight = FontWeight.Bold,
-                                                        color = Color(0xFF10B981)
-                                                    )
-                                                }
-                                            }
-                                        }
-
-                                        // Action Buttons Row
-                                        Row(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
+                                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                                             Button(
                                                 onClick = { onRestoreEncryptedSnapshot(encBackup) },
                                                 enabled = !isBusy,
                                                 shape = RoundedCornerShape(8.dp),
                                                 colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF10B981)),
-                                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
-                                                modifier = Modifier
-                                                    .weight(1f)
-                                                    .height(34.dp)
+                                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                                                modifier = Modifier.height(32.dp)
                                             ) {
-                                                Icon(imageVector = Icons.Default.Restore, contentDescription = null, modifier = Modifier.size(14.dp))
-                                                Spacer(modifier = Modifier.width(4.dp))
-                                                Text("استعادة", fontSize = 11.5.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                                                Text("استعادة", fontSize = 11.sp, color = Color.White)
                                             }
 
                                             OutlinedButton(
@@ -2436,17 +2389,15 @@ private fun LocalDatabaseBackupCard(
                                                 enabled = !isBusy,
                                                 shape = RoundedCornerShape(8.dp),
                                                 contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
-                                                modifier = Modifier.height(34.dp)
+                                                modifier = Modifier.height(32.dp)
                                             ) {
-                                                Icon(imageVector = Icons.Default.Download, contentDescription = "تصدير", modifier = Modifier.size(14.dp))
+                                                Icon(imageVector = Icons.Default.Download, contentDescription = "تصدير", modifier = Modifier.size(13.dp))
                                             }
 
                                             IconButton(
                                                 onClick = { onDeleteEncryptedSnapshot(encBackup) },
                                                 enabled = !isBusy,
-                                                modifier = Modifier
-                                                    .size(34.dp)
-                                                    .background(MaterialTheme.colorScheme.error.copy(alpha = 0.12f), CircleShape)
+                                                modifier = Modifier.size(32.dp)
                                             ) {
                                                 Icon(
                                                     imageVector = Icons.Default.DeleteOutline,
@@ -2611,7 +2562,7 @@ private fun LocalDatabaseBackupCard(
                 ) {
                     localBackups.take(8).forEach { backup ->
                         val formattedDate = remember(backup.createdAt) {
-                            SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US)
+                            SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
                                 .format(Date(backup.createdAt))
                         }
                         val sizeKb = (backup.fileSizeBytes / 1024L).coerceAtLeast(1L)
@@ -2761,7 +2712,7 @@ private fun LocalBackupRestoreConfirmDialog(
     var replaceExisting by remember { mutableStateOf(false) }
     val meta = payload.metadata
     val formattedCreatedAt = remember(meta.createdAt) {
-        SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date(meta.createdAt))
+        SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date(meta.createdAt))
     }
 
     AlertDialog(

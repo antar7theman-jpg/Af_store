@@ -240,7 +240,13 @@ class AntarSalesViewModel(
     val activityLogs: StateFlow<List<ActivityLog>> = repository.recentLogsFlow
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
-    val offlineSyncManager = com.example.utils.OfflineSyncManager(application, repository, viewModelScope)
+    val offlineSyncManager = com.example.utils.OfflineSyncManager(
+        context = application,
+        repository = repository,
+        coroutineScope = viewModelScope,
+        liveInventorySyncManager = liveInventorySyncManager,
+        activeAccountProvider = { activeStaffAccount }
+    )
 
     val pendingSyncQueueCount: StateFlow<Int> = repository.pendingSyncQueueCountFlow
         .stateIn(viewModelScope, SharingStarted.Eagerly, 0)
@@ -537,36 +543,6 @@ class AntarSalesViewModel(
                 checkAndRunScheduledSalesReportIfDue()
             }
         }
-
-        // Delegate for OfflineSyncManager to invoke live cloud sync and mark offline queue synced
-        offlineSyncManager.setSyncExecutionDelegate {
-            try {
-                val compResult = liveInventorySyncManager.triggerComprehensiveSync(activeStaffAccount)
-                repository.markAllTablesAndQueueAsSynced()
-                val summary = if (compResult.isSuccess) {
-                    "تمت المزامنة بنجاح وتفريغ طابور العمليات المعلقة (${com.example.utils.AppFormatUtils.formatInt(compResult.productsCount)} صنفاً، ${com.example.utils.AppFormatUtils.formatInt(compResult.invoicesCount)} فاتورة)"
-                } else {
-                    "تم حفظ ومزامنة المعاملات محلياً: ${compResult.message}"
-                }
-                com.example.utils.OfflineSyncManager.SyncResult(isSuccess = true, summary = summary)
-            } catch (e: Exception) {
-                repository.markAllTablesAndQueueAsSynced()
-                com.example.utils.OfflineSyncManager.SyncResult(
-                    isSuccess = true,
-                    summary = "تمت معالجة وتفريغ طابور المعاملات المعلقة بنجاح"
-                )
-            }
-        }
-
-        // Auto-sync ticker: checks every 20 seconds and syncs if auto-sync is enabled and pending queue > 0
-        viewModelScope.launch {
-            while (true) {
-                delay(20_000L)
-                if (offlineSyncManager.isAutoSyncEnabled.value && pendingSyncQueueCount.value > 0) {
-                    offlineSyncManager.performSync()
-                }
-            }
-        }
     }
 
     fun seedSampleCatalogAndCustomers(force: Boolean = true) {
@@ -620,14 +596,18 @@ class AntarSalesViewModel(
             _currentUser.value = localUser
         }
 
-        // Start real-time Firestore sync between manager and affiliated workers (Products, Invoices, GPS)
+        // Start real-time Firestore sync between manager and affiliated workers (Products, Invoices, Purchases, GPS)
         liveInventorySyncManager.startLiveInventorySync(account) { statusMsg ->
             showStatusMessage(statusMsg)
         }
         liveInventorySyncManager.startLiveInvoicesSync(account) { statusMsg ->
             showStatusMessage(statusMsg)
         }
+        liveInventorySyncManager.startLivePurchaseInvoicesSync(account) { statusMsg ->
+            showStatusMessage(statusMsg)
+        }
         liveInventorySyncManager.startLiveWorkerLocationsSync(account)
+        offlineSyncManager.triggerManualSync()
 
         // Observe Pro upgrade requests
         if (account.isOwner) {
@@ -2241,7 +2221,11 @@ class AntarSalesViewModel(
                 itemsJson = PurchaseInvoice.encodeItems(listOf(item)),
                 itemsCount = 1
             )
-            repository.savePurchaseInvoice(invoice)
+            val savedId = repository.savePurchaseInvoice(invoice).toInt()
+            val savedInvoice = if (savedId > 0) invoice.copy(id = savedId) else invoice
+            launch(Dispatchers.IO) {
+                liveInventorySyncManager.pushPurchaseInvoiceToCloud(savedInvoice, activeStaffAccount)
+            }
             repository.logActivity(
                 user = _currentUser.value,
                 actionType = "SUPPLIER_DEBT_ADDED",
@@ -2275,8 +2259,9 @@ class AntarSalesViewModel(
                 actionType = "PURCHASE_INVOICE",
                 description = "تسجيل فاتورة مشتريات ${inv.invoiceNumber} من المورد ${inv.supplierName}"
             )
-            // Push real-time stock increases to cloud for all workers
+            // Push real-time stock increases and purchase invoice to cloud for all workers
             launch(Dispatchers.IO) {
+                liveInventorySyncManager.pushPurchaseInvoiceToCloud(inv, activeStaffAccount)
                 val currentProds = repository.getAllProductsOnce().associateBy { it.id }
                 val increases = mutableListOf<LiveInventorySyncManager.StockIncrease>()
                 for (it in items) {
@@ -2322,6 +2307,9 @@ class AntarSalesViewModel(
                 paymentStatus = newStatus
             )
             repository.savePurchaseInvoice(updated)
+            launch(Dispatchers.IO) {
+                liveInventorySyncManager.pushPurchaseInvoiceToCloud(updated, activeStaffAccount)
+            }
             repository.logActivity(
                 user = _currentUser.value,
                 actionType = "SUPPLIER_PAYMENT",
@@ -2960,8 +2948,7 @@ class AntarSalesViewModel(
 
     fun triggerComprehensiveSync(onComplete: (Boolean, String) -> Unit = { _, _ -> }) {
         viewModelScope.launch {
-            val result = liveInventorySyncManager.triggerComprehensiveSync(activeStaffAccount)
-            repository.markAllTablesAndQueueAsSynced()
+            val result = liveInventorySyncManager.performIncrementalSync(activeStaffAccount)
             showStatusMessage(result.message)
             onComplete(result.isSuccess, result.message)
         }
@@ -3278,6 +3265,25 @@ class AntarSalesViewModel(
                 isDebt = isDebt
             )
 
+            launch(Dispatchers.IO) {
+                val deductions = invoice.items.mapNotNull { saleItem ->
+                    val prod = productsToUpdate.find { it.id == saleItem.productId } ?: currentProducts[saleItem.productId]
+                    if (prod != null) {
+                        LiveInventorySyncManager.StockDeduction(
+                            productId = prod.id,
+                            barcode = prod.barcode,
+                            firestoreId = prod.firestoreId,
+                            unitsDeducted = saleItem.quantitySold,
+                            resultingStock = prod.stock
+                        )
+                    } else null
+                }
+                if (deductions.isNotEmpty()) {
+                    liveInventorySyncManager.pushBatchStockDeductions(deductions, activeStaffAccount)
+                }
+                liveInventorySyncManager.pushInvoiceToCloud(completedInvoice, activeStaffAccount)
+            }
+
             showStatusMessage("تم تأكيد استلام وتسليم الطلبية #${invoice.invoiceId} وخصم المخزون بنجاح! 🚚📦")
             onSuccess(completedInvoice)
         }
@@ -3287,6 +3293,9 @@ class AntarSalesViewModel(
         viewModelScope.launch {
             withContext(Dispatchers.IO) {
                 repository.cancelPreSaleOrder(invoice.invoiceId)
+            }
+            launch(Dispatchers.IO) {
+                liveInventorySyncManager.pushInvoiceToCloud(invoice.copy(status = "cancelled"), activeStaffAccount)
             }
             showStatusMessage("تم إلغاء طلب البيع المسبق #${invoice.invoiceId} وتحرير الحجز ❌")
             onSuccess()

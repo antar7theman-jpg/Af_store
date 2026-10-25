@@ -541,13 +541,28 @@ class AntarRepository(private val dao: StoreDao) {
      * - If the incoming product has a newer `updatedAt` (or doesn't exist locally), it is merged
      *   into Room with `syncStatus = SYNCED` while preserving any local `imagePath`.
      */
+    suspend fun updateRemoteInvoiceStatusIfChanged(
+        invoiceGroupId: String,
+        remoteStatus: String,
+        updatedAt: Long = System.currentTimeMillis()
+    ) {
+        if (invoiceGroupId.isBlank() || remoteStatus.isBlank()) return
+        dao.updateSalesStatusByInvoiceGroup(invoiceGroupId, remoteStatus, updatedAt, RecordSyncState.SYNCED)
+    }
+
     suspend fun mergeRemoteProductsWithTimestampResolution(remoteProducts: List<Product>): Int {
         if (remoteProducts.isEmpty()) return 0
-        val localById = dao.getAllProductsOnce().associateBy { it.id }
+        val allLocal = dao.getAllProductsOnce()
+        val localById = allLocal.associateBy { it.id }
+        val localByFirestoreId = allLocal.filter { it.firestoreId.isNotBlank() }.associateBy { it.firestoreId }
+        val localByBarcode = allLocal.filter { it.barcode.isNotBlank() }.associateBy { it.barcode.trim().lowercase() }
         val toSave = mutableListOf<Product>()
 
         for (remote in remoteProducts) {
-            val local = localById[remote.id]
+            val local = (if (remote.firestoreId.isNotBlank()) localByFirestoreId[remote.firestoreId] else null)
+                ?: (if (remote.barcode.isNotBlank()) localByBarcode[remote.barcode.trim().lowercase()] else null)
+                ?: (if (remote.id > 0) localById[remote.id] else null)
+
             if (local == null) {
                 toSave.add(remote.copy(syncStatus = RecordSyncState.SYNCED))
             } else {
@@ -556,6 +571,8 @@ class AntarRepository(private val dao: StoreDao) {
                     val resolvedUpdatedAt = maxOf(remote.updatedAt, local.updatedAt)
                     toSave.add(
                         remote.copy(
+                            id = local.id,
+                            firestoreId = remote.firestoreId.ifBlank { local.firestoreId },
                             imagePath = remote.imagePath.ifBlank { local.imagePath },
                             updatedAt = resolvedUpdatedAt,
                             syncStatus = RecordSyncState.SYNCED
@@ -669,16 +686,19 @@ class AntarRepository(private val dao: StoreDao) {
 
     suspend fun mergeRemotePurchaseInvoicesWithTimestampResolution(remoteInvoices: List<PurchaseInvoice>): Int {
         if (remoteInvoices.isEmpty()) return 0
-        val localById = dao.getAllPurchaseInvoicesOnce().associateBy { it.id }
+        val allLocal = dao.getAllPurchaseInvoicesOnce()
+        val localById = allLocal.associateBy { it.id }
+        val localByNumber = allLocal.filter { it.invoiceNumber.isNotBlank() }.associateBy { it.invoiceNumber }
         val toSave = mutableListOf<PurchaseInvoice>()
         for (remote in remoteInvoices) {
-            val local = localById[remote.id]
+            val local = (if (remote.invoiceNumber.isNotBlank()) localByNumber[remote.invoiceNumber] else null)
+                ?: (if (remote.id > 0) localById[remote.id] else null)
             if (local == null) {
                 toSave.add(remote.copy(syncStatus = RecordSyncState.SYNCED))
             } else {
                 val isLocalPendingNewer = local.syncStatus != RecordSyncState.SYNCED && local.updatedAt > remote.updatedAt
                 if (!isLocalPendingNewer) {
-                    toSave.add(remote.copy(syncStatus = RecordSyncState.SYNCED))
+                    toSave.add(remote.copy(id = local.id, syncStatus = RecordSyncState.SYNCED))
                 }
             }
         }

@@ -5,7 +5,6 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -31,7 +30,6 @@ import androidx.compose.material.icons.filled.Inventory2
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.LocalOffer
 import androidx.compose.material.icons.filled.PhotoCamera
-import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.ShoppingCart
@@ -1224,7 +1222,7 @@ fun UnregisteredBarcodeResolutionCard(
                 .padding(14.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            // Top Warning & Action Header
+            // Top Warning & Scanned Barcode Header
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -1238,127 +1236,61 @@ fun UnregisteredBarcodeResolutionCard(
                     Surface(
                         shape = RoundedCornerShape(12.dp),
                         color = amberAccent.copy(alpha = 0.2f),
-                        modifier = Modifier.size(38.dp)
+                        modifier = Modifier.size(40.dp)
                     ) {
                         Box(contentAlignment = Alignment.Center) {
                             Icon(
                                 imageVector = Icons.Default.WarningAmber,
                                 contentDescription = null,
                                 tint = Color(0xFFD97706),
-                                modifier = Modifier.size(22.dp)
+                                modifier = Modifier.size(24.dp)
                             )
                         }
                     }
 
-                    Column {
+                    Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = "باركود جديد غير مسجل",
+                            text = "باركود جديد غير مسجل — تعريف سريع",
                             fontWeight = FontWeight.ExtraBold,
                             fontSize = 14.5.sp,
                             color = MaterialTheme.colorScheme.onSurface
                         )
-                        Text(
-                            text = "تعريف سريع للسلعة أو ربطها بمنتج سابق",
-                            fontSize = 11.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-
-                OutlinedButton(
-                    onClick = onResetScan,
-                    shape = RoundedCornerShape(10.dp),
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.35f)),
-                    colors = ButtonDefaults.outlinedButtonColors(
-                        contentColor = MaterialTheme.colorScheme.error
-                    ),
-                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-                    modifier = Modifier
-                        .height(34.dp)
-                        .testTag("unregistered_barcode_rescan_btn")
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Close,
-                        contentDescription = null,
-                        modifier = Modifier.size(14.dp)
-                    )
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text(
-                        text = "إلغاء / مسح آخر",
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 11.5.sp
-                    )
-                }
-            }
-
-            // Dedicated High-Visibility Scanned Barcode Strip (Guaranteed Single-Line Display)
-            Surface(
-                shape = RoundedCornerShape(14.dp),
-                color = if (isDark) Color(0xFF1E293B) else Color(0xFFFEF3C7),
-                border = BorderStroke(1.2.dp, Color(0xFFF59E0B).copy(alpha = 0.65f)),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag("unregistered_barcode_display_strip")
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 12.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Surface(
-                            shape = RoundedCornerShape(8.dp),
-                            color = Color(0xFFD97706).copy(alpha = 0.18f),
-                            modifier = Modifier.size(32.dp)
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Icon(
-                                    imageVector = Icons.Default.QrCodeScanner,
-                                    contentDescription = null,
-                                    tint = Color(0xFFD97706),
-                                    modifier = Modifier.size(18.dp)
-                                )
-                            }
-                        }
-                        Column {
                             Text(
                                 text = "الكود الممسوح:",
                                 fontSize = 11.5.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = if (isDark) Color(0xFFCBD5E1) else Color(0xFF78350F)
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
-                            Text(
-                                text = "جاهز للإضافة والربط",
-                                fontSize = 10.sp,
-                                color = if (isDark) Color(0xFF94A3B8) else Color(0xFF92400E)
-                            )
+                            Surface(
+                                shape = RoundedCornerShape(6.dp),
+                                color = amberAccent.copy(alpha = 0.22f)
+                            ) {
+                                Text(
+                                    text = scannedBarcode,
+                                    fontFamily = FontFamily.Monospace,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    fontSize = 12.5.sp,
+                                    color = if (isDark) Color(0xFFFDE68A) else Color(0xFFB45309),
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                                )
+                            }
                         }
                     }
+                }
 
-                    Surface(
-                        shape = RoundedCornerShape(10.dp),
-                        color = if (isDark) Color(0xFF0F172A) else Color.White,
-                        border = BorderStroke(1.2.dp, Color(0xFFF59E0B).copy(alpha = 0.8f))
-                    ) {
-                        CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
-                            Text(
-                                text = scannedBarcode,
-                                fontFamily = FontFamily.Monospace,
-                                fontWeight = FontWeight.Black,
-                                fontSize = 15.sp,
-                                maxLines = 1,
-                                softWrap = false,
-                                letterSpacing = 1.2.sp,
-                                color = if (isDark) Color(0xFFFDE68A) else Color(0xFFB45309),
-                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
-                            )
-                        }
-                    }
+                TextButton(
+                    onClick = onResetScan,
+                    modifier = Modifier.testTag("unregistered_barcode_rescan_btn")
+                ) {
+                    Text(
+                        text = "إلغاء / مسح آخر",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.error
+                    )
                 }
             }
 

@@ -1,6 +1,6 @@
 {
-  "name": "",
-  "description": "",
+  "name": "af store",
+  "description": "نظام إدارة المبيعات والمخزون ونقاط البيع والفواتير الشامل لمتجر AF store",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

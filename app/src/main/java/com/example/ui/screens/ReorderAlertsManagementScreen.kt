@@ -520,15 +520,16 @@ fun ReorderAlertsManagementScreen(
             .testTag("reorder_alerts_management_screen"),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        // 1. Header & Actions Below Title
-        Column(
+        // 1. Header & Settings Toggle Row
+        Row(
             modifier = Modifier.fillMaxWidth(),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
         ) {
             Row(
-                modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.weight(1f)
             ) {
                 Surface(
                     shape = RoundedCornerShape(12.dp),
@@ -545,50 +546,40 @@ fun ReorderAlertsManagementScreen(
                         )
                     }
                 }
-                Column(modifier = Modifier.weight(1f)) {
+                Column {
                     Text(
                         text = "إدارة تنبيهات المخزون وإعادة الطلب",
                         fontWeight = FontWeight.ExtraBold,
-                        fontSize = 14.5.sp,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        maxLines = 1,
-                        softWrap = false,
-                        overflow = TextOverflow.Ellipsis
+                        fontSize = 15.5.sp,
+                        color = MaterialTheme.colorScheme.onSurface
                     )
                     Text(
                         text = "مراقبة النواقص الفورية وإصدار طلبيات الشراء للموردين",
                         fontSize = 11.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             }
 
             Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Box(modifier = Modifier.weight(1f)) {
-                    UniversalReportHeaderButton(
-                        title = "التقارير PDF",
-                        tag = "reorder_pdf_report_btn",
-                        onClick = { showReorderPdfReportDialog = true }
-                    )
-                }
+                UniversalReportHeaderButton(
+                    title = "التقارير PDF",
+                    tag = "reorder_pdf_report_btn",
+                    onClick = { showReorderPdfReportDialog = true }
+                )
 
                 FilledTonalButton(
                     onClick = { showSettingsPanel = !showSettingsPanel },
                     shape = RoundedCornerShape(12.dp),
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
                     colors = ButtonDefaults.filledTonalButtonColors(
                         containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.8f),
                         contentColor = MaterialTheme.colorScheme.primary
                     ),
-                    modifier = Modifier
-                        .weight(1f)
-                        .testTag("toggle_alert_settings_panel_btn")
+                    modifier = Modifier.testTag("toggle_alert_settings_panel_btn")
                 ) {
                     Icon(
                         imageVector = Icons.Default.Tune,
@@ -599,8 +590,7 @@ fun ReorderAlertsManagementScreen(
                     Text(
                         text = if (showSettingsPanel) "إخفاء الإعدادات" else "إعدادات التنبيه",
                         fontSize = 11.5.sp,
-                        fontWeight = FontWeight.Bold,
-                        maxLines = 1
+                        fontWeight = FontWeight.Bold
                     )
                 }
             }

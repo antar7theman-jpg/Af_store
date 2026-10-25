@@ -4,8 +4,8 @@ import android.content.Context
 import android.util.Base64
 import android.util.Log
 import com.example.data.firebase.StaffAccount
+import com.example.data.firebase.StaffAccountRepository
 import com.google.firebase.auth.FirebaseAuth
-import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.FieldValue
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.tasks.await
@@ -49,7 +49,7 @@ object CloudDatabaseBackupManager {
             val encryptedBytes = backupFile.readBytes()
             val base64Data = Base64.encodeToString(encryptedBytes, Base64.NO_WRAP)
 
-            val db = FirebaseFirestore.getInstance()
+            val db = StaffAccountRepository.getFirestoreDb(context)
             val backupDocMap = mapOf(
                 "userId" to userId,
                 "fileName" to metadata.fileName,
@@ -92,7 +92,7 @@ object CloudDatabaseBackupManager {
             val auth = FirebaseAuth.getInstance()
             val userId = auth.currentUser?.uid ?: staffAccount?.userId?.takeIf { it.isNotBlank() } ?: "default_store_user"
 
-            val db = FirebaseFirestore.getInstance()
+            val db = StaffAccountRepository.getFirestoreDb(context)
             val docSnap = db.collection("users").document(userId)
                 .collection(COLLECTION_CLOUD_BACKUPS)
                 .document("latest")

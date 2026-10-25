@@ -71,6 +71,7 @@ fun LoyaltyDashboardScreen(
 
     var selectedCustomerForEdit by remember { mutableStateOf<Customer?>(null) }
     var showPdfDialog by remember { mutableStateOf<UniversalPdfReportPayload?>(null) }
+    var showScannerDialog by remember { mutableStateOf(false) }
     var showEditCampaignDialog by remember { mutableStateOf(false) }
 
     val loyaltyGoalDefault by viewModel.loyaltyGoalDefault.collectAsStateWithLifecycle()
@@ -81,6 +82,16 @@ fun LoyaltyDashboardScreen(
         UniversalSectionPdfReportDialog(
             payload = showPdfDialog!!,
             onDismiss = { showPdfDialog = null }
+        )
+    }
+
+    if (showScannerDialog) {
+        CouponScannerDialog(
+            viewModel = viewModel,
+            onDismiss = { showScannerDialog = false },
+            onCouponScanned = { code ->
+                Toast.makeText(context, "تم استبدال وتطبيق القسيمة بنجاح: $code", Toast.LENGTH_SHORT).show()
+            }
         )
     }
 
@@ -128,6 +139,10 @@ fun LoyaltyDashboardScreen(
                     }
                 },
                 actions = {
+                    UniversalReportHeaderButton(
+                        title = "مسح قسيمة",
+                        onClick = { showScannerDialog = true }
+                    )
                     UniversalReportHeaderButton(
                         title = "تصدير PDF",
                         onClick = {
@@ -418,7 +433,72 @@ fun LoyaltyDashboardScreen(
                 }
             }
 
-
+            // Quick Manager QR Scanner Module Card
+            item {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("manager_loyalty_qr_scanner_card"),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.25f)
+                    ),
+                    shape = RoundedCornerShape(14.dp),
+                    border = BorderStroke(1.2.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f))
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(14.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(
+                            modifier = Modifier.weight(1f),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Surface(
+                                shape = CircleShape,
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(42.dp)
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        imageVector = Icons.Default.QrCodeScanner,
+                                        contentDescription = null,
+                                        tint = Color.White,
+                                        modifier = Modifier.size(24.dp)
+                                    )
+                                }
+                            }
+                            Column {
+                                Text(
+                                    text = "ماسح قسائم الولاء QR عند الكاشير",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 13.sp,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text(
+                                    text = "التحقق المباشر من كوبونات العملاء وتطبيق الخصم فوراً",
+                                    fontSize = 11.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                        Button(
+                            onClick = { showScannerDialog = true },
+                            modifier = Modifier.testTag("launch_loyalty_scanner_btn"),
+                            shape = RoundedCornerShape(10.dp),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                        ) {
+                            Icon(Icons.Default.CameraAlt, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("مسح الآن", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+            }
 
             // 3. Top Customers standings list
             item {

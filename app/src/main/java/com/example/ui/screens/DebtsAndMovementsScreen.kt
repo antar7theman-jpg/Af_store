@@ -578,59 +578,59 @@ fun DebtsAndMovementsScreen(viewModel: AntarSalesViewModel) {
                     .padding(horizontal = 12.dp, vertical = 10.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                // Header Top Row: Title & Subtitle in Single Line
+                // Header Top Row: Title + Action Buttons
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Surface(
-                        shape = RoundedCornerShape(10.dp),
-                        color = MaterialTheme.colorScheme.primary.copy(alpha = if (isDark) 0.16f else 0.12f),
-                        border = BorderStroke(
-                            1.dp,
-                            MaterialTheme.colorScheme.primary.copy(alpha = if (isDark) 0.5f else 0.7f)
-                        ),
-                        modifier = Modifier.size(36.dp)
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.weight(1f)
                     ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Icon(
-                                imageVector = Icons.Default.AccountBalanceWallet,
-                                contentDescription = "الديون وحركتها",
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(20.dp)
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = MaterialTheme.colorScheme.primary.copy(alpha = if (isDark) 0.16f else 0.12f),
+                            border = BorderStroke(
+                                1.dp,
+                                MaterialTheme.colorScheme.primary.copy(alpha = if (isDark) 0.5f else 0.7f)
+                            ),
+                            modifier = Modifier.size(36.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    imageVector = Icons.Default.AccountBalanceWallet,
+                                    contentDescription = "الديون وحركتها",
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                        }
+
+                        Column {
+                            Text(
+                                text = "مركز الديون وحركتها",
+                                fontWeight = FontWeight.ExtraBold,
+                                fontSize = 15.sp,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                maxLines = 1
+                            )
+                            Text(
+                                text = "متابعة ديون العملاء والموردين والتحصيل",
+                                fontSize = 10.5.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
                         }
                     }
 
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "مركز الديون وحركتها",
-                            fontWeight = FontWeight.ExtraBold,
-                            fontSize = 14.5.sp,
-                            color = MaterialTheme.colorScheme.onSurface,
-                            maxLines = 1,
-                            softWrap = false,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        Text(
-                            text = "متابعة ديون العملاء والموردين والتحصيل",
-                            fontSize = 10.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
-                }
-
-                // Header Bottom Row: All Action Buttons (PDF Report, Quick Pay, Add Debt)
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    // PDF Report Button
-                    Box(modifier = Modifier.weight(1f)) {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(5.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        // PDF Report Button
                         Surface(
                             onClick = { showDebtsPdfReportDialog = true },
                             shape = RoundedCornerShape(10.dp),
@@ -640,14 +640,13 @@ fun DebtsAndMovementsScreen(viewModel: AntarSalesViewModel) {
                                 semantic.infoBlue.copy(alpha = if (isDark) 0.5f else 0.7f)
                             ),
                             modifier = Modifier
-                                .fillMaxWidth()
-                                .height(36.dp)
+                                .height(34.dp)
                                 .testTag("debts_pdf_report_btn")
                         ) {
                             Row(
-                                modifier = Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 6.dp),
+                                modifier = Modifier.padding(horizontal = 7.dp, vertical = 6.dp),
                                 verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.Center
+                                horizontalArrangement = Arrangement.spacedBy(3.dp)
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.PictureAsPdf,
@@ -655,20 +654,16 @@ fun DebtsAndMovementsScreen(viewModel: AntarSalesViewModel) {
                                     tint = semantic.infoBlue,
                                     modifier = Modifier.size(14.dp)
                                 )
-                                Spacer(Modifier.width(3.dp))
                                 Text(
                                     text = "التقارير PDF",
                                     fontWeight = FontWeight.Bold,
-                                    fontSize = 10.5.sp,
-                                    color = semantic.infoBlue,
-                                    maxLines = 1
+                                    fontSize = 11.sp,
+                                    color = semantic.infoBlue
                                 )
                             }
                         }
-                    }
 
-                    // Quick Pay Button
-                    Box(modifier = Modifier.weight(1f)) {
+                        // Quick Pay Button
                         Surface(
                             onClick = { showQuickPayPickerDialog = true },
                             shape = RoundedCornerShape(10.dp),
@@ -678,35 +673,30 @@ fun DebtsAndMovementsScreen(viewModel: AntarSalesViewModel) {
                                 semantic.profitGreen.copy(alpha = if (isDark) 0.6f else 0.8f)
                             ),
                             modifier = Modifier
-                                .fillMaxWidth()
-                                .height(36.dp)
+                                .height(34.dp)
                                 .testTag("debts_quick_pay_btn")
                         ) {
                             Row(
-                                modifier = Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 6.dp),
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
                                 verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.Center
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.Payments,
                                     contentDescription = "تسديد دفعة",
                                     tint = semantic.profitGreen,
-                                    modifier = Modifier.size(14.dp)
+                                    modifier = Modifier.size(15.dp)
                                 )
-                                Spacer(Modifier.width(3.dp))
                                 Text(
                                     text = "تسديد دفعة",
                                     fontWeight = FontWeight.Bold,
-                                    fontSize = 10.5.sp,
-                                    color = semantic.profitGreen,
-                                    maxLines = 1
+                                    fontSize = 11.5.sp,
+                                    color = semantic.profitGreen
                                 )
                             }
                         }
-                    }
 
-                    // Add New Debt Button
-                    Box(modifier = Modifier.weight(1.1f)) {
+                        // Add New Debt Button
                         Surface(
                             onClick = {
                                 initialAddDebtPartyType = if (selectedSubTab == 2) "SUPPLIER" else "CUSTOMER"
@@ -718,28 +708,25 @@ fun DebtsAndMovementsScreen(viewModel: AntarSalesViewModel) {
                             shape = RoundedCornerShape(10.dp),
                             color = MaterialTheme.colorScheme.primary,
                             modifier = Modifier
-                                .fillMaxWidth()
-                                .height(36.dp)
+                                .height(34.dp)
                                 .testTag("debts_add_new_debt_btn")
                         ) {
                             Row(
-                                modifier = Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 6.dp),
+                                modifier = Modifier.padding(horizontal = 9.dp, vertical = 6.dp),
                                 verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.Center
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.Add,
                                     contentDescription = "إضافة دين",
                                     tint = Color.White,
-                                    modifier = Modifier.size(14.dp)
+                                    modifier = Modifier.size(15.dp)
                                 )
-                                Spacer(Modifier.width(3.dp))
                                 Text(
                                     text = "إضافة دين",
                                     fontWeight = FontWeight.ExtraBold,
-                                    fontSize = 10.5.sp,
-                                    color = Color.White,
-                                    maxLines = 1
+                                    fontSize = 11.5.sp,
+                                    color = Color.White
                                 )
                             }
                         }
@@ -1650,7 +1637,7 @@ private fun UnifiedMovementsTimelineList(
             val isCustomer = item.partyType == "CUSTOMER"
             val accentColor = if (isPayment) semantic.profitGreen else Color(0xFFEF4444)
             val dateStr = remember(item.timestampMillis) {
-                SimpleDateFormat("yyyy-MM-dd • hh:mm a", Locale.ENGLISH).format(Date(item.timestampMillis))
+                SimpleDateFormat("yyyy-MM-dd • hh:mm a", Locale.getDefault()).format(Date(item.timestampMillis))
             }
 
             val badgeLabel = when {
@@ -2025,7 +2012,7 @@ private fun CustomerDebtsTabContent(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                             if (latestTx != null) {
-                                val lastDate = SimpleDateFormat("yyyy-MM-dd", Locale.ENGLISH).format(Date(latestTx.date))
+                                val lastDate = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date(latestTx.date))
                                 Text(
                                     text = "آخر حركة ($lastDate): ${latestTx.notes.ifBlank { if (latestTx.type == "PAYMENT") "سداد دفعة" else "تسجيل دين" }}",
                                     fontSize = 11.sp,
@@ -2308,7 +2295,7 @@ private fun SupplierDebtsTabContent(
         ) { inv ->
             val hasDebt = inv.remainingDebt > 0.009
             val dateStr = remember(inv.dateMillis) {
-                SimpleDateFormat("yyyy-MM-dd • hh:mm a", Locale.ENGLISH).format(Date(inv.dateMillis))
+                SimpleDateFormat("yyyy-MM-dd • hh:mm a", Locale.getDefault()).format(Date(inv.dateMillis))
             }
 
             Card(
@@ -3947,7 +3934,7 @@ private fun CustomerAccountStatementDialog(
                     } else {
                         items(transactions, key = { "stmt_tx_${it.id}" }) { tx ->
                             val isPay = tx.type == "PAYMENT"
-                            val dStr = SimpleDateFormat("yyyy-MM-dd hh:mm a", Locale.ENGLISH).format(Date(tx.date))
+                            val dStr = SimpleDateFormat("yyyy-MM-dd hh:mm a", Locale.getDefault()).format(Date(tx.date))
                             Surface(
                                 shape = RoundedCornerShape(12.dp),
                                 color = semantic.cardSubtle,
@@ -4238,7 +4225,7 @@ private fun SupplierAccountStatementDialog(
             appendLine("*الرصيد المتبقي للمورد: ${String.format(Locale.US, "%.2f", totalRemaining)} $currencySymbol*")
             appendLine("────────────────────")
             invoices.forEach { inv ->
-                val d = SimpleDateFormat("yyyy-MM-dd", Locale.ENGLISH).format(Date(inv.dateMillis))
+                val d = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date(inv.dateMillis))
                 appendLine("• [${inv.invoiceNumber} - $d] الإجمالي: ${inv.totalCost} | المدفوع: ${inv.paidAmount} | المتبقي: ${inv.remainingDebt} $currencySymbol")
             }
         }
@@ -4358,7 +4345,7 @@ private fun SupplierAccountStatementDialog(
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     items(invoices, key = { "sup_stmt_${it.id}" }) { inv ->
-                        val dStr = SimpleDateFormat("yyyy-MM-dd", Locale.ENGLISH).format(Date(inv.dateMillis))
+                        val dStr = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date(inv.dateMillis))
                         Surface(
                             shape = RoundedCornerShape(12.dp),
                             color = semantic.cardSubtle,
@@ -4555,7 +4542,7 @@ private fun SupplierInvoiceDetailsPreviewDialog(
     val semantic = LocalAFStoreSemanticColors.current
     val items = remember(invoice.itemsJson) { invoice.getItems() }
     val dateStr = remember(invoice.dateMillis) {
-        SimpleDateFormat("yyyy-MM-dd • hh:mm a", Locale.ENGLISH).format(Date(invoice.dateMillis))
+        SimpleDateFormat("yyyy-MM-dd • hh:mm a", Locale.getDefault()).format(Date(invoice.dateMillis))
     }
     val hasDebt = invoice.remainingDebt > 0.009
 
@@ -4834,7 +4821,7 @@ internal fun DebtPaymentReceiptDialog(
     val storeLogoCustomText by viewModel.storeLogoCustomText.collectAsState()
     val isCustomer = receipt.partyType == "CUSTOMER"
     val dateFormatted = remember(receipt.timestampMillis) {
-        SimpleDateFormat("yyyy-MM-dd • hh:mm a", Locale.ENGLISH).format(Date(receipt.timestampMillis))
+        SimpleDateFormat("yyyy-MM-dd • hh:mm a", Locale.getDefault()).format(Date(receipt.timestampMillis))
     }
     val isFullyCleared = receipt.remainingBalance <= 0.009
 
@@ -5454,7 +5441,7 @@ internal fun buildCustomerStatementShareMessage(
     val cleanStore = storeName.ifBlank { "المتجر" }
     val totalDebtsAdded = transactions.filter { it.type != "PAYMENT" }.sumOf { it.amount }
     val totalPaymentsPaid = transactions.filter { it.type == "PAYMENT" }.sumOf { it.amount }
-    val nowStr = SimpleDateFormat("yyyy-MM-dd hh:mm a", Locale.ENGLISH).format(Date())
+    val nowStr = SimpleDateFormat("yyyy-MM-dd hh:mm a", Locale.getDefault()).format(Date())
 
     return buildString {
         appendLine("📋 *كشف حساب ومديونية عميل*")
@@ -5479,7 +5466,7 @@ internal fun buildCustomerStatementShareMessage(
         } else {
             appendLine("📑 *آخر الحركات (${transactions.take(15).size}):*")
             transactions.take(15).forEach { tx ->
-                val d = SimpleDateFormat("yyyy-MM-dd", Locale.ENGLISH).format(Date(tx.date))
+                val d = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date(tx.date))
                 val kind = if (tx.type == "PAYMENT") "✓ سداد دفعة (-)" else "+ فاتورة / دين"
                 val notePart = if (tx.notes.isNotBlank()) " — ${tx.notes}" else ""
                 appendLine("• [$d] $kind: ${String.format(Locale.US, "%.2f", tx.amount)} $currencySymbol$notePart")
@@ -5503,7 +5490,7 @@ internal fun buildCustomerInvoiceShareMessage(
 ): String {
     val cleanStore = storeName.ifBlank { "المتجر" }
     val dateMillis = invoice?.dateMillis ?: transaction?.date ?: System.currentTimeMillis()
-    val dateStr = SimpleDateFormat("yyyy-MM-dd hh:mm a", Locale.ENGLISH).format(Date(dateMillis))
+    val dateStr = SimpleDateFormat("yyyy-MM-dd hh:mm a", Locale.getDefault()).format(Date(dateMillis))
     val isPayment = transaction?.type == "PAYMENT" || invoice?.paymentMethod == "CASH" && transaction?.type == "PAYMENT"
 
     return buildString {
@@ -6002,7 +5989,7 @@ private fun printDebtReceiptViaSystemPrintManager(
 
     val jobName = "Receipt_${receipt.receiptNumber}"
     val isCustomer = receipt.partyType == "CUSTOMER"
-    val dateFormatted = SimpleDateFormat("yyyy-MM-dd hh:mm a", Locale.ENGLISH).format(Date(receipt.timestampMillis))
+    val dateFormatted = SimpleDateFormat("yyyy-MM-dd hh:mm a", Locale.getDefault()).format(Date(receipt.timestampMillis))
 
     printManager.print(
         jobName,
@@ -6232,7 +6219,7 @@ private fun printCustomerStatementViaSystemPrintManager(
 
     val safeCustName = customer.name.replace(Regex("[^\\p{L}\\p{N}_-]+"), "_").ifBlank { "Customer" }
     val jobName = "Customer_Statement_${safeCustName}_${System.currentTimeMillis() / 1000}"
-    val issueDateStr = SimpleDateFormat("yyyy-MM-dd hh:mm a", Locale.ENGLISH).format(Date())
+    val issueDateStr = SimpleDateFormat("yyyy-MM-dd hh:mm a", Locale.getDefault()).format(Date())
     val totalDebtsAdded = transactions.filter { it.type != "PAYMENT" }.sumOf { it.amount }
     val totalPaymentsPaid = transactions.filter { it.type == "PAYMENT" }.sumOf { it.amount }
 
@@ -6503,7 +6490,7 @@ private fun printCustomerStatementViaSystemPrintManager(
                                 canvas.drawRect(tableLeft, rowTop, tableRight, rowBottom, borderPaint)
 
                                 val isPay = tx.type == "PAYMENT"
-                                val dateStr = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.ENGLISH).format(Date(tx.date))
+                                val dateStr = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(tx.date))
                                 val typeLabel = if (isPay) "تسديد دفعة (-)" else "إضافة دين (+)"
                                 val cleanNotes = tx.notes.ifBlank { "—" }.let {
                                     if (it.length > 34) it.take(34) + "…" else it
@@ -6598,7 +6585,7 @@ private fun printSupplierStatementViaSystemPrintManager(
 
     val safeSupName = supplierName.replace(Regex("[^\\p{L}\\p{N}_-]+"), "_").ifBlank { "Supplier" }
     val jobName = "Supplier_Statement_${safeSupName}_${System.currentTimeMillis() / 1000}"
-    val issueDateStr = SimpleDateFormat("yyyy-MM-dd hh:mm a", Locale.ENGLISH).format(Date())
+    val issueDateStr = SimpleDateFormat("yyyy-MM-dd hh:mm a", Locale.getDefault()).format(Date())
     val totalPurchases = invoices.sumOf { it.totalCost }
     val totalPaid = invoices.sumOf { it.paidAmount }
     val totalRemaining = invoices.sumOf { it.remainingDebt }
@@ -6863,7 +6850,7 @@ private fun printSupplierStatementViaSystemPrintManager(
                                 }
                                 canvas.drawRect(tableLeft, rowTop, tableRight, rowBottom, borderPaint)
 
-                                val dateStr = SimpleDateFormat("yyyy-MM-dd", Locale.ENGLISH).format(Date(inv.dateMillis))
+                                val dateStr = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date(inv.dateMillis))
                                 val rowTextY = rowTop + 17f
 
                                 canvas.drawText(runningIndex.toString(), colIdxRight, rowTextY, cellTextPaint)

@@ -55,6 +55,8 @@ import androidx.compose.material.icons.filled.Analytics
 import androidx.compose.material.icons.filled.Android
 import androidx.compose.material.icons.filled.BrightnessAuto
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.CloudSync
 import androidx.compose.material.icons.filled.Contrast
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.Dashboard
@@ -81,6 +83,7 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarDefaults
@@ -154,6 +157,8 @@ import com.example.ui.screens.ReportsScreen
 import com.example.ui.screens.SalesReportPdfPreviewDialog
 import com.example.ui.screens.ScheduledReportInAppNotificationBanner
 import com.example.ui.screens.SettingsScreen
+import com.example.ui.screens.SyncStatusDropdownPanel
+import com.example.ui.screens.SyncStatusScreen
 import com.example.ui.screens.TopBarLowStockBellButton
 import com.example.ui.theme.AFStoreTheme
 import com.example.ui.theme.AppThemeMode
@@ -248,6 +253,8 @@ fun AFStoreMainApp(
     var selectedTab by rememberSaveable { mutableStateOf(MainAppTab.POS) }
     var showApkTempModal by rememberSaveable { mutableStateOf(false) }
     var showLogoMenu by rememberSaveable { mutableStateOf(false) }
+    var logoMenuTab by rememberSaveable { mutableStateOf(0) }
+    var showFullScreenSyncStatus by rememberSaveable { mutableStateOf(false) }
     var showQuickThemeMenu by rememberSaveable { mutableStateOf(false) }
 
     val storeName by viewModel.storeName.collectAsState()
@@ -304,12 +311,16 @@ fun AFStoreMainApp(
         else -> 22.dp
     }
 
-    BackHandler(enabled = showLogoMenu || showQuickThemeMenu) {
-        showLogoMenu = false
-        showQuickThemeMenu = false
+    BackHandler(enabled = showLogoMenu || showQuickThemeMenu || showFullScreenSyncStatus) {
+        if (showFullScreenSyncStatus) {
+            showFullScreenSyncStatus = false
+        } else {
+            showLogoMenu = false
+            showQuickThemeMenu = false
+        }
     }
 
-    BackHandler(enabled = !showLogoMenu && !showQuickThemeMenu && !selectedTab.showInBottomBar) {
+    BackHandler(enabled = !showLogoMenu && !showQuickThemeMenu && !showFullScreenSyncStatus && !selectedTab.showInBottomBar) {
         selectedTab = MainAppTab.POS
     }
 
@@ -340,7 +351,7 @@ fun AFStoreMainApp(
         var lastNotifiedPendingCount by rememberSaveable { mutableStateOf(0) }
         LaunchedEffect(pendingStaffCount, myStaffAccount.isOwner) {
             if (myStaffAccount.isOwner && pendingStaffCount > lastNotifiedPendingCount && pendingStaffCount > 0) {
-                viewModel.showStatusMessage("🔔 تنبيه للمالك: لديك $pendingStaffCount طلب حساب جديد (حسابات Lite مجانية أو Pro تجريبية) بانتظار قرار القبول أو الرفض.")
+                viewModel.showStatusMessage("🔔 تنبيه للمالك: لديك $pendingStaffCount طلب حساب جديد (بما في ذلك طلبات Pro التجريبية 7 أيام) بانتظار قرار القبول أو الرفض.")
             }
             lastNotifiedPendingCount = pendingStaffCount
         }
@@ -352,12 +363,7 @@ fun AFStoreMainApp(
                 val latestLite = allStaffAccounts.firstOrNull { it.syncMode == "lite" }
                 val storeInfo = if (latestLite != null && latestLite.branchName.isNotBlank()) " لمتجر «${latestLite.branchName}»" else ""
                 val managerInfo = if (latestLite != null && latestLite.fullName.isNotBlank()) " (${latestLite.fullName})" else ""
-                val isPending = latestLite?.approvalStatus == StaffApprovalStatus.PENDING || latestLite?.isPending == true
-                if (isPending) {
-                    viewModel.showStatusMessage("🏪 إشعار للمالك: طلب جديد لفتح حساب Lite / Offline مجاني$storeInfo$managerInfo بانتظار قرار الموافقة أو الرفض.")
-                } else {
-                    viewModel.showStatusMessage("🏪 إشعار للمالك: تم اعتماد حساب Lite / Offline مجاني$storeInfo$managerInfo بنجاح.")
-                }
+                viewModel.showStatusMessage("🏪 إشعار للمالك: قام مستخدم جديد بفتح حساب Lite / offline مجاني$storeInfo$managerInfo وتفعيله تلقائياً.")
             }
             lastNotifiedLiteCount = currentLiteCount
         }
@@ -565,56 +571,51 @@ fun AFStoreMainApp(
                                         handleTabClick(tab)
                                     },
                                     icon = {
-                                        Column(
-                                            horizontalAlignment = Alignment.CenterHorizontally,
-                                            verticalArrangement = Arrangement.Center
-                                        ) {
-                                            Text(
-                                                text = tab.labelAr,
-                                                fontSize = if (isCompactScreen) 9.5.sp else 10.5.sp,
-                                                fontWeight = if (isSelectedTab) FontWeight.ExtraBold else FontWeight.Medium,
-                                                color = if (isSelectedTab) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                                                maxLines = 1,
-                                                softWrap = false,
-                                                overflow = TextOverflow.Ellipsis,
-                                                modifier = Modifier.padding(bottom = 3.dp)
-                                            )
-
-                                            Box(
-                                                contentAlignment = Alignment.Center,
-                                                modifier = Modifier
-                                                    .width(capsuleWidth)
-                                                    .height(capsuleHeight)
-                                                    .clip(RoundedCornerShape(16.dp))
-                                                    .then(
-                                                        if (isPrimarySaleTab && !isSelectedTab) {
-                                                            Modifier.border(
-                                                                BorderStroke(
-                                                                    0.8.dp,
-                                                                    MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
-                                                                ),
-                                                                RoundedCornerShape(16.dp)
-                                                            )
-                                                        } else Modifier
-                                                    )
-                                                    .background(
-                                                        when {
-                                                            isSelectedTab -> MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)
-                                                            isPrimarySaleTab -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
-                                                            else -> Color.Transparent
-                                                        }
-                                                    )
-                                            ) {
-                                                Icon(
-                                                    imageVector = tab.icon,
-                                                    contentDescription = tab.labelAr,
-                                                    tint = if (isSelectedTab) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                                                    modifier = Modifier.size(iconSize)
+                                        Box(
+                                            contentAlignment = Alignment.Center,
+                                            modifier = Modifier
+                                                .offset(y = (-5).dp)
+                                                .width(capsuleWidth)
+                                                .height(capsuleHeight)
+                                                .clip(RoundedCornerShape(16.dp))
+                                                .then(
+                                                    if (isPrimarySaleTab && !isSelectedTab) {
+                                                        Modifier.border(
+                                                            BorderStroke(
+                                                                0.8.dp,
+                                                                MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+                                                            ),
+                                                            RoundedCornerShape(16.dp)
+                                                        )
+                                                    } else Modifier
                                                 )
-                                            }
+                                                .background(
+                                                    when {
+                                                        isSelectedTab -> MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)
+                                                        isPrimarySaleTab -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
+                                                        else -> Color.Transparent
+                                                    }
+                                                )
+                                        ) {
+                                            Icon(
+                                                imageVector = tab.icon,
+                                                contentDescription = tab.labelAr,
+                                                tint = if (isSelectedTab) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                                modifier = Modifier.size(iconSize)
+                                            )
                                         }
                                     },
-                                    label = null,
+                                    label = {
+                                        Text(
+                                            text = tab.labelAr,
+                                            fontSize = if (isCompactScreen) 9.5.sp else 10.5.sp,
+                                            fontWeight = if (isSelectedTab) FontWeight.Bold else FontWeight.Medium,
+                                            maxLines = 1,
+                                            softWrap = false,
+                                            overflow = TextOverflow.Ellipsis,
+                                            modifier = Modifier.offset(y = (-5).dp)
+                                        )
+                                    },
                                     colors = NavigationBarItemDefaults.colors(
                                         selectedIconColor = MaterialTheme.colorScheme.primary,
                                         selectedTextColor = MaterialTheme.colorScheme.primary,
@@ -1021,7 +1022,7 @@ fun AFStoreMainApp(
                         .statusBarsPadding()
                         .padding(top = 60.dp, start = 12.dp, end = 12.dp, bottom = 24.dp)
                         .navigationBarsPadding()
-                        .width(285.dp)
+                        .widthIn(min = 310.dp, max = 345.dp)
                         .clickable(
                             interactionSource = remember { MutableInteractionSource() },
                             indication = null
@@ -1033,221 +1034,383 @@ fun AFStoreMainApp(
                             .verticalScroll(rememberScrollState())
                             .padding(vertical = 6.dp)
                     ) {
+                        // Header with Title and Segmented Tabs
                         Column(
-                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp)
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 6.dp)
                         ) {
-                            Text(
-                                text = "لوحة التحكم والفواتير والتقارير",
-                                fontWeight = FontWeight.ExtraBold,
-                                fontSize = 13.sp,
-                                color = MaterialTheme.colorScheme.primary
-                            )
-                            Text(
-                                text = "اختر القسم للانتقال السريع",
-                                fontSize = 11.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(
+                                    text = if (logoMenuTab == 0) "أقسام المتجر ولوحة التحكم" else "صحة المزامنة السحابية",
+                                    fontWeight = FontWeight.ExtraBold,
+                                    fontSize = 13.sp,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                                IconButton(
+                                    onClick = { showLogoMenu = false },
+                                    modifier = Modifier.size(24.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Close,
+                                        contentDescription = "إغلاق",
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                            }
+                            Spacer(modifier = Modifier.height(6.dp))
+
+                            // Segmented Switcher
+                            Surface(
+                                shape = RoundedCornerShape(10.dp),
+                                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(3.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    Surface(
+                                        shape = RoundedCornerShape(8.dp),
+                                        color = if (logoMenuTab == 0) MaterialTheme.colorScheme.surface else Color.Transparent,
+                                        shadowElevation = if (logoMenuTab == 0) 2.dp else 0.dp,
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .clickable { logoMenuTab = 0 }
+                                            .testTag("logo_tab_sections")
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.padding(vertical = 6.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.Center
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Dashboard,
+                                                contentDescription = null,
+                                                tint = if (logoMenuTab == 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                                modifier = Modifier.size(15.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            Text(
+                                                text = "أقسام المتجر",
+                                                fontSize = 11.sp,
+                                                fontWeight = if (logoMenuTab == 0) FontWeight.ExtraBold else FontWeight.Medium,
+                                                color = if (logoMenuTab == 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                    }
+
+                                    Surface(
+                                        shape = RoundedCornerShape(8.dp),
+                                        color = if (logoMenuTab == 1) MaterialTheme.colorScheme.surface else Color.Transparent,
+                                        shadowElevation = if (logoMenuTab == 1) 2.dp else 0.dp,
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .clickable { logoMenuTab = 1 }
+                                            .testTag("logo_tab_sync_status")
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.padding(vertical = 6.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.Center
+                                        ) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(7.dp)
+                                                    .clip(CircleShape)
+                                                    .background(if (pendingSyncCount > 0) Color(0xFFF59E0B) else Color(0xFF10B981))
+                                            )
+                                            Spacer(modifier = Modifier.width(5.dp))
+                                            Text(
+                                                text = "صحة المزامنة",
+                                                fontSize = 11.sp,
+                                                fontWeight = if (logoMenuTab == 1) FontWeight.ExtraBold else FontWeight.Medium,
+                                                color = if (logoMenuTab == 1) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                            if (pendingSyncCount > 0) {
+                                                Spacer(modifier = Modifier.width(4.dp))
+                                                Surface(
+                                                    shape = CircleShape,
+                                                    color = Color(0xFFF59E0B),
+                                                    modifier = Modifier.size(14.dp)
+                                                ) {
+                                                    Box(contentAlignment = Alignment.Center) {
+                                                        Text(
+                                                            text = pendingSyncCount.toString(),
+                                                            fontSize = 8.sp,
+                                                            color = Color.White,
+                                                            fontWeight = FontWeight.Bold
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
+
                         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                        logoMenuTabs.forEach { tab ->
-                            val isCurrent = selectedTab == tab
+
+                        if (logoMenuTab == 1) {
+                            SyncStatusDropdownPanel(
+                                viewModel = viewModel,
+                                onClose = { showLogoMenu = false },
+                                onOpenFullScreen = {
+                                    showLogoMenu = false
+                                    showFullScreenSyncStatus = true
+                                },
+                                modifier = Modifier.padding(12.dp)
+                            )
+                        } else {
+                            Surface(
+                                shape = RoundedCornerShape(10.dp),
+                                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.08f),
+                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.3f)),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 12.dp, vertical = 6.dp)
+                                    .clickable { logoMenuTab = 1 }
+                                    .testTag("quick_sync_bar_click")
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(8.dp)
+                                                .clip(CircleShape)
+                                                .background(if (pendingSyncCount > 0) Color(0xFFF59E0B) else Color(0xFF10B981))
+                                        )
+                                        Text(
+                                            text = if (pendingSyncCount > 0) "$pendingSyncCount معلقة للرفع" else "السحابة متزامنة ومحدثة ✓",
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.onSurface
+                                        )
+                                    }
+                                    Text(
+                                        text = "فحص السرعة ⚡",
+                                        fontSize = 10.5.sp,
+                                        fontWeight = FontWeight.ExtraBold,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                }
+                            }
+
+                            logoMenuTabs.forEach { tab ->
+                                val isCurrent = selectedTab == tab
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable {
+                                            handleTabClick(tab)
+                                        }
+                                        .padding(horizontal = 14.dp, vertical = 10.dp)
+                                        .testTag("logo_menu_${tab.routeTag}"),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                ) {
+                                    Surface(
+                                        shape = RoundedCornerShape(10.dp),
+                                        color = if (isCurrent) MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)
+                                        else MaterialTheme.colorScheme.surfaceVariant,
+                                        border = BorderStroke(
+                                            width = if (isCurrent) 1.3.dp else 1.dp,
+                                            color = if (isCurrent) MaterialTheme.colorScheme.primary
+                                            else MaterialTheme.colorScheme.outlineVariant
+                                        ),
+                                        modifier = Modifier.size(36.dp)
+                                    ) {
+                                        Box(contentAlignment = Alignment.Center) {
+                                            Icon(
+                                                imageVector = tab.icon,
+                                                contentDescription = tab.labelAr,
+                                                tint = if (isCurrent) MaterialTheme.colorScheme.primary
+                                                else MaterialTheme.colorScheme.onSurfaceVariant,
+                                                modifier = Modifier.size(20.dp)
+                                            )
+                                        }
+                                    }
+
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                        ) {
+                                            Text(
+                                                text = tab.labelAr,
+                                                fontWeight = if (isCurrent) FontWeight.ExtraBold else FontWeight.SemiBold,
+                                                fontSize = 14.sp,
+                                                color = if (isCurrent) MaterialTheme.colorScheme.primary
+                                                else MaterialTheme.colorScheme.onSurface
+                                            )
+                                            if (tab == MainAppTab.DEBTS && totalActiveDebts > 0.009) {
+                                                Surface(
+                                                    shape = RoundedCornerShape(6.dp),
+                                                    color = Color(0xFFEF4444).copy(alpha = 0.14f),
+                                                    border = BorderStroke(1.dp, Color(0xFFEF4444).copy(alpha = 0.65f))
+                                                ) {
+                                                    Text(
+                                                        text = "${String.format(Locale.US, "%.0f", totalActiveDebts)} $currencySymbol",
+                                                        fontSize = 9.5.sp,
+                                                        fontWeight = FontWeight.ExtraBold,
+                                                        color = Color(0xFFEF4444),
+                                                        modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
+                                                    )
+                                                }
+                                            }
+                                            if (tab == MainAppTab.REORDER_ALERTS && lowStockProducts.isNotEmpty()) {
+                                                Surface(
+                                                    shape = RoundedCornerShape(6.dp),
+                                                    color = Color(0xFFEF4444).copy(alpha = 0.16f),
+                                                    border = BorderStroke(1.dp, Color(0xFFEF4444).copy(alpha = 0.7f))
+                                                ) {
+                                                    Text(
+                                                        text = "${lowStockProducts.size} نواقص",
+                                                        fontSize = 9.5.sp,
+                                                        fontWeight = FontWeight.ExtraBold,
+                                                        color = Color(0xFFEF4444),
+                                                        modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
+                                                    )
+                                                }
+                                            }
+                                        }
+                                        Text(
+                                            text = tab.subtitleAr,
+                                            fontSize = 11.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+
+                                    if (isCurrent) {
+                                        Icon(
+                                            imageVector = Icons.Default.Check,
+                                            contentDescription = "محدد",
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
+                                }
+                            }
+                            HorizontalDivider(
+                                modifier = Modifier.padding(vertical = 4.dp),
+                                color = MaterialTheme.colorScheme.outlineVariant
+                            )
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .clickable {
-                                        handleTabClick(tab)
+                                        showLogoMenu = false
+                                        onOpenStaffManagement()
                                     }
                                     .padding(horizontal = 14.dp, vertical = 10.dp)
-                                    .testTag("logo_menu_${tab.routeTag}"),
+                                    .testTag("logo_menu_firebase_staff_accounts"),
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(12.dp)
                             ) {
                                 Surface(
                                     shape = RoundedCornerShape(10.dp),
-                                    color = if (isCurrent) MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)
-                                    else MaterialTheme.colorScheme.surfaceVariant,
-                                    border = BorderStroke(
-                                        width = if (isCurrent) 1.3.dp else 1.dp,
-                                        color = if (isCurrent) MaterialTheme.colorScheme.primary
-                                        else MaterialTheme.colorScheme.outlineVariant
-                                    ),
+                                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.16f),
+                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.65f)),
                                     modifier = Modifier.size(36.dp)
                                 ) {
                                     Box(contentAlignment = Alignment.Center) {
                                         Icon(
-                                            imageVector = tab.icon,
-                                            contentDescription = tab.labelAr,
-                                            tint = if (isCurrent) MaterialTheme.colorScheme.primary
-                                            else MaterialTheme.colorScheme.onSurfaceVariant,
+                                            imageVector = Icons.Default.ManageAccounts,
+                                            contentDescription = "حسابات العمال والمدراء",
+                                            tint = MaterialTheme.colorScheme.primary,
                                             modifier = Modifier.size(20.dp)
                                         )
                                     }
                                 }
-
                                 Column(modifier = Modifier.weight(1f)) {
                                     Row(
                                         verticalAlignment = Alignment.CenterVertically,
                                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                                     ) {
                                         Text(
-                                            text = tab.labelAr,
-                                            fontWeight = if (isCurrent) FontWeight.ExtraBold else FontWeight.SemiBold,
-                                            fontSize = 14.sp,
-                                            color = if (isCurrent) MaterialTheme.colorScheme.primary
-                                            else MaterialTheme.colorScheme.onSurface
+                                            text = "حسابات العمال والمدراء",
+                                            fontWeight = FontWeight.ExtraBold,
+                                            fontSize = 13.sp,
+                                            color = MaterialTheme.colorScheme.primary
                                         )
-                                        if (tab == MainAppTab.DEBTS && totalActiveDebts > 0.009) {
+                                        if (pendingStaffCount > 0) {
                                             Surface(
                                                 shape = RoundedCornerShape(6.dp),
-                                                color = Color(0xFFEF4444).copy(alpha = 0.14f),
-                                                border = BorderStroke(1.dp, Color(0xFFEF4444).copy(alpha = 0.65f))
+                                                color = semanticColors.debtAmber.copy(alpha = 0.18f),
+                                                border = BorderStroke(1.dp, semanticColors.debtAmber)
                                             ) {
                                                 Text(
-                                                    text = "${String.format(Locale.US, "%.0f", totalActiveDebts)} $currencySymbol",
+                                                    text = "$pendingStaffCount معلق",
                                                     fontSize = 9.5.sp,
                                                     fontWeight = FontWeight.ExtraBold,
-                                                    color = Color(0xFFEF4444),
-                                                    modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
-                                                )
-                                            }
-                                        }
-                                        if (tab == MainAppTab.REORDER_ALERTS && lowStockProducts.isNotEmpty()) {
-                                            Surface(
-                                                shape = RoundedCornerShape(6.dp),
-                                                color = Color(0xFFEF4444).copy(alpha = 0.16f),
-                                                border = BorderStroke(1.dp, Color(0xFFEF4444).copy(alpha = 0.7f))
-                                            ) {
-                                                Text(
-                                                    text = "${lowStockProducts.size} نواقص",
-                                                    fontSize = 9.5.sp,
-                                                    fontWeight = FontWeight.ExtraBold,
-                                                    color = Color(0xFFEF4444),
+                                                    color = semanticColors.debtAmber,
                                                     modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
                                                 )
                                             }
                                         }
                                     }
                                     Text(
-                                        text = tab.subtitleAr,
+                                        text = "الموافقة على دخول العمال وتحديد الصلاحيات",
                                         fontSize = 11.sp,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
                                 }
-
-                                if (isCurrent) {
-                                    Icon(
-                                        imageVector = Icons.Default.Check,
-                                        contentDescription = "محدد",
-                                        tint = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.size(18.dp)
-                                    )
-                                }
                             }
-                        }
-                        HorizontalDivider(
-                            modifier = Modifier.padding(vertical = 4.dp),
-                            color = MaterialTheme.colorScheme.outlineVariant
-                        )
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable {
-                                    showLogoMenu = false
-                                    onOpenStaffManagement()
-                                }
-                                .padding(horizontal = 14.dp, vertical = 10.dp)
-                                .testTag("logo_menu_firebase_staff_accounts"),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(12.dp)
-                        ) {
-                            Surface(
-                                shape = RoundedCornerShape(10.dp),
-                                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.16f),
-                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.65f)),
-                                modifier = Modifier.size(36.dp)
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        showLogoMenu = false
+                                        showApkTempModal = true
+                                    }
+                                    .padding(horizontal = 14.dp, vertical = 10.dp)
+                                    .testTag("logo_menu_apk_temp_link"),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(12.dp)
                             ) {
-                                Box(contentAlignment = Alignment.Center) {
-                                    Icon(
-                                        imageVector = Icons.Default.ManageAccounts,
-                                        contentDescription = "حسابات العمال والمدراء",
-                                        tint = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.size(20.dp)
-                                    )
-                                }
-                            }
-                            Column(modifier = Modifier.weight(1f)) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                Surface(
+                                    shape = RoundedCornerShape(10.dp),
+                                    color = semanticColors.profitGreen.copy(alpha = 0.16f),
+                                    border = BorderStroke(1.dp, semanticColors.profitGreen.copy(alpha = 0.65f)),
+                                    modifier = Modifier.size(36.dp)
                                 ) {
-                                    Text(
-                                        text = "حسابات العمال والمدراء",
-                                        fontWeight = FontWeight.ExtraBold,
-                                        fontSize = 13.sp,
-                                        color = MaterialTheme.colorScheme.primary
-                                    )
-                                    if (pendingStaffCount > 0) {
-                                        Surface(
-                                            shape = RoundedCornerShape(6.dp),
-                                            color = semanticColors.debtAmber.copy(alpha = 0.18f),
-                                            border = BorderStroke(1.dp, semanticColors.debtAmber)
-                                        ) {
-                                            Text(
-                                                text = "$pendingStaffCount معلق",
-                                                fontSize = 9.5.sp,
-                                                fontWeight = FontWeight.ExtraBold,
-                                                color = semanticColors.debtAmber,
-                                                modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
-                                            )
-                                        }
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Icon(
+                                            imageVector = Icons.Default.Android,
+                                            contentDescription = "تحميل APK برابط مؤقت",
+                                            tint = semanticColors.profitGreen,
+                                            modifier = Modifier.size(20.dp)
+                                        )
                                     }
                                 }
-                                Text(
-                                    text = "الموافقة على دخول العمال وتحديد الصلاحيات",
-                                    fontSize = 11.sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        }
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable {
-                                    showLogoMenu = false
-                                    showApkTempModal = true
-                                }
-                                .padding(horizontal = 14.dp, vertical = 10.dp)
-                                .testTag("logo_menu_apk_temp_link"),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(12.dp)
-                        ) {
-                            Surface(
-                                shape = RoundedCornerShape(10.dp),
-                                color = semanticColors.profitGreen.copy(alpha = 0.16f),
-                                border = BorderStroke(1.dp, semanticColors.profitGreen.copy(alpha = 0.65f)),
-                                modifier = Modifier.size(36.dp)
-                            ) {
-                                Box(contentAlignment = Alignment.Center) {
-                                    Icon(
-                                        imageVector = Icons.Default.Android,
-                                        contentDescription = "تحميل APK برابط مؤقت",
-                                        tint = semanticColors.profitGreen,
-                                        modifier = Modifier.size(20.dp)
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "تحميل التطبيق APK (رابط مؤقت Temp)",
+                                        fontWeight = FontWeight.ExtraBold,
+                                        fontSize = 13.sp,
+                                        color = semanticColors.profitGreen
+                                    )
+                                    Text(
+                                        text = "استخراج APK وتوليد رابط خارجي مؤقت + رمز QR",
+                                        fontSize = 11.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
                                 }
-                            }
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = "تحميل التطبيق APK (رابط مؤقت Temp)",
-                                    fontWeight = FontWeight.ExtraBold,
-                                    fontSize = 13.sp,
-                                    color = semanticColors.profitGreen
-                                )
-                                Text(
-                                    text = "استخراج APK وتوليد رابط خارجي مؤقت + رمز QR",
-                                    fontSize = 11.sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
                             }
                         }
                     }
@@ -1565,6 +1728,20 @@ fun AFStoreMainApp(
             onDismiss = { showApkTempModal = false },
             onShowMessage = { msg -> viewModel.showStatusMessage(msg) }
         )
+    }
+
+    if (showFullScreenSyncStatus) {
+        androidx.compose.ui.window.Dialog(
+            onDismissRequest = { showFullScreenSyncStatus = false },
+            properties = androidx.compose.ui.window.DialogProperties(
+                usePlatformDefaultWidth = false
+            )
+        ) {
+            SyncStatusScreen(
+                viewModel = viewModel,
+                onBack = { showFullScreenSyncStatus = false }
+            )
+        }
     }
 
     if (showPendingManagerRequestsModal) {

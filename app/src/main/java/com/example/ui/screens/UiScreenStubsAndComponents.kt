@@ -2066,143 +2066,6 @@ fun ThermalPrinterSettingsCard(
                 }
             }
 
-            // Harmonious Thermal Printer Ignition & Connectivity Card
-            Surface(
-                shape = RoundedCornerShape(16.dp),
-                color = when {
-                    isConnected -> Color(0xFF10B981).copy(alpha = 0.12f)
-                    isConnecting -> Color(0xFF0284C7).copy(alpha = 0.12f)
-                    else -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
-                },
-                border = BorderStroke(
-                    1.5.dp,
-                    when {
-                        isConnected -> Color(0xFF10B981).copy(alpha = 0.7f)
-                        isConnecting -> Color(0xFF0284C7).copy(alpha = 0.7f)
-                        else -> MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)
-                    }
-                ),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(16.dp))
-                    .clickable {
-                        if (isConnected) {
-                            onDisconnectPrinter()
-                        } else if (config.lastPrinterAddress.isNotBlank()) {
-                            onReconnectSavedPrinter()
-                        } else {
-                            onOpenBluetoothPicker()
-                        }
-                    }
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 14.dp, vertical = 12.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Surface(
-                            shape = CircleShape,
-                            color = when {
-                                isConnected -> Color(0xFF10B981)
-                                isConnecting -> Color(0xFF0284C7)
-                                else -> MaterialTheme.colorScheme.outline.copy(alpha = 0.25f)
-                            },
-                            modifier = Modifier.size(44.dp)
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Icon(
-                                    imageVector = Icons.Default.PowerSettingsNew,
-                                    contentDescription = "زر إشعال وتشغيل الطابعة الحرارية",
-                                    tint = if (isConnected || isConnecting) Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.size(24.dp)
-                                )
-                            }
-                        }
-
-                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(6.dp)
-                            ) {
-                                Text(
-                                    text = "زر إشعال وتشغيل الطابعة الحرارية",
-                                    fontWeight = FontWeight.ExtraBold,
-                                    fontSize = 14.sp,
-                                    color = MaterialTheme.colorScheme.onSurface
-                                )
-                                Surface(
-                                    shape = RoundedCornerShape(6.dp),
-                                    color = when {
-                                        isConnected -> Color(0xFF10B981).copy(alpha = 0.2f)
-                                        isConnecting -> Color(0xFF0284C7).copy(alpha = 0.2f)
-                                        else -> MaterialTheme.colorScheme.outline.copy(alpha = 0.15f)
-                                    }
-                                ) {
-                                    Text(
-                                        text = when {
-                                            isConnected -> "مشتعلة ومتصلة ✓"
-                                            isConnecting -> "جاري الاتصال..."
-                                            else -> "متوقفة"
-                                        },
-                                        fontSize = 10.5.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = when {
-                                            isConnected -> Color(0xFF047857)
-                                            isConnecting -> Color(0xFF0284C7)
-                                            else -> MaterialTheme.colorScheme.onSurfaceVariant
-                                        },
-                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                    )
-                                }
-                            }
-                            Text(
-                                text = when {
-                                    isConnected -> "الطابعة متصلة ومشتعلة (${config.lastPrinterName.ifBlank { "طابعة حرارية" }} - ${config.paperWidthMm}mm) وجاهزة للطباعة الفورية"
-                                    isConnecting -> "جاري مزامنة وإشعال الاتصال اللاسلكي بالطابعة..."
-                                    config.lastPrinterAddress.isNotBlank() -> "انقر هنا لتشغيل وإشعال الاتصال بالطابعة المحفوظة (${config.lastPrinterName.ifBlank { config.lastPrinterAddress }})"
-                                    else -> "انقر هنا لاختيار طابعة البلوتوث وإشعال الاتصال بها"
-                                },
-                                fontSize = 11.5.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                lineHeight = 16.sp
-                            )
-                        }
-                    }
-
-                    if (isConnected) {
-                        FilledTonalButton(
-                            onClick = onDisconnectPrinter,
-                            shape = RoundedCornerShape(10.dp),
-                            colors = ButtonDefaults.filledTonalButtonColors(
-                                containerColor = Color(0xFFEF4444).copy(alpha = 0.15f),
-                                contentColor = Color(0xFFEF4444)
-                            ),
-                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-                            modifier = Modifier.height(36.dp)
-                        ) {
-                            Text("إطفاء", fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
-                        }
-                    } else if (config.lastPrinterAddress.isNotBlank()) {
-                        Button(
-                            onClick = onReconnectSavedPrinter,
-                            shape = RoundedCornerShape(10.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF10B981)),
-                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-                            modifier = Modifier.height(36.dp)
-                        ) {
-                            Text("إشعال", fontSize = 11.5.sp, fontWeight = FontWeight.Bold, color = Color.White)
-                        }
-                    }
-                }
-            }
-
             if (isExpanded) {
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
 
@@ -2569,7 +2432,7 @@ fun DesktopPrinterSettingsCard(
                                 color = if (config.enabled) Color(0xFF10B981).copy(alpha = 0.15f) else Color.Gray.copy(alpha = 0.15f)
                             ) {
                                 Text(
-                                    text = if (config.enabled) "مشتعلة ومفعلة ✓" else "متوقفة",
+                                    text = if (config.enabled) "نشطة ✓" else "معطلة",
                                     fontSize = 11.sp,
                                     fontWeight = FontWeight.Bold,
                                     color = if (config.enabled) Color(0xFF059669) else Color.Gray,
@@ -2585,100 +2448,18 @@ fun DesktopPrinterSettingsCard(
                     }
                 }
 
-                IconButton(
-                    onClick = { isExpanded = !isExpanded },
-                    modifier = Modifier.size(40.dp)
-                ) {
-                    Icon(
-                        imageVector = if (isExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
-                        contentDescription = if (isExpanded) "طي" else "توسيع"
-                    )
-                }
-            }
-
-            // Harmonious, dedicated "زر إشعال وتشغيل الطابعة" (Master Ignition & Power Button)
-            Surface(
-                shape = RoundedCornerShape(16.dp),
-                color = if (config.enabled) Color(0xFF10B981).copy(alpha = 0.12f)
-                        else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
-                border = BorderStroke(
-                    1.5.dp,
-                    if (config.enabled) Color(0xFF10B981).copy(alpha = 0.7f)
-                    else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)
-                ),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(16.dp))
-                    .clickable { onUpdateConfig(config.copy(enabled = !config.enabled)) }
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 14.dp, vertical = 12.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Surface(
-                            shape = CircleShape,
-                            color = if (config.enabled) Color(0xFF10B981) else MaterialTheme.colorScheme.outline.copy(alpha = 0.25f),
-                            modifier = Modifier.size(44.dp)
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Icon(
-                                    imageVector = Icons.Default.PowerSettingsNew,
-                                    contentDescription = "زر إشعال وتشغيل الطابعة",
-                                    tint = if (config.enabled) Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.size(24.dp)
-                                )
-                            }
-                        }
-
-                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(6.dp)
-                            ) {
-                                Text(
-                                    text = "زر إشعال وتشغيل الطابعة",
-                                    fontWeight = FontWeight.ExtraBold,
-                                    fontSize = 14.sp,
-                                    color = MaterialTheme.colorScheme.onSurface
-                                )
-                                Surface(
-                                    shape = RoundedCornerShape(6.dp),
-                                    color = if (config.enabled) Color(0xFF10B981).copy(alpha = 0.2f) else MaterialTheme.colorScheme.outline.copy(alpha = 0.15f)
-                                ) {
-                                    Text(
-                                        text = if (config.enabled) "مشتعلة ومفعلة ✓" else "متوقفة",
-                                        fontSize = 10.5.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = if (config.enabled) Color(0xFF047857) else MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                    )
-                                }
-                            }
-                            Text(
-                                text = if (config.enabled)
-                                    "محرك الطباعة مشتعل وجاهز لاستقبال أوامر الطباعة والفواتير"
-                                else
-                                    "انقر هنا لتشغيل وإشعال محرك الطباعة لسطح المكتب",
-                                fontSize = 11.5.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                lineHeight = 16.sp
-                            )
-                        }
-                    }
-
+                Row(verticalAlignment = Alignment.CenterVertically) {
                     Switch(
                         checked = config.enabled,
                         onCheckedChange = { onUpdateConfig(config.copy(enabled = it)) },
                         modifier = Modifier.testTag("desktop_printer_master_switch")
                     )
+                    IconButton(onClick = { isExpanded = !isExpanded }) {
+                        Icon(
+                            imageVector = if (isExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                            contentDescription = if (isExpanded) "طي" else "توسيع"
+                        )
+                    }
                 }
             }
 

@@ -1,0 +1,218 @@
+{
+  "entities": {
+    "StaffAccount": {
+      "title": "Staff Account",
+      "description": "Multi-role store employee and manager profile with permissions",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "storeId": { "type": "string" },
+        "email": { "type": "string" },
+        "fullName": { "type": "string" },
+        "phone": { "type": "string" },
+        "role": { "type": "string", "enum": ["owner", "manager", "worker", "admin"] },
+        "requestedRole": { "type": "string" },
+        "approvalStatus": { "type": "string", "enum": ["PENDING", "APPROVED", "REJECTED", "SUSPENDED"] },
+        "approvedByUid": { "type": "string" },
+        "approvedByName": { "type": "string" },
+        "parentManagerUid": { "type": "string" },
+        "parentManagerName": { "type": "string" },
+        "parentManagerEmail": { "type": "string" },
+        "branchName": { "type": "string" },
+        "secretPin": { "type": "string" },
+        "activeDeviceId": { "type": "string" },
+        "activeDeviceName": { "type": "string" },
+        "activeSessionToken": { "type": "string" },
+        "isTrial": { "type": "boolean" },
+        "trialEndsAtMillis": { "type": "integer" },
+        "isApprovedByOwner": { "type": "boolean" },
+        "syncMode": { "type": "string", "enum": ["pro", "offline", "lite"] },
+        "canMakeSales": { "type": "boolean" },
+        "canManageInventory": { "type": "boolean" },
+        "canEditPrices": { "type": "boolean" },
+        "canViewReports": { "type": "boolean" },
+        "canManageDebtsAndCustomers": { "type": "boolean" },
+        "canRefundOrVoid": { "type": "boolean" },
+        "canApplyDiscounts": { "type": "boolean" },
+        "canViewCostPrices": { "type": "boolean" },
+        "canExportData": { "type": "boolean" },
+        "canManagePurchaseInvoices": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "storeId", "email", "role", "approvalStatus"]
+    },
+    "AdminRecord": {
+      "title": "Admin Record",
+      "description": "Verified store manager or owner record",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "storeId": { "type": "string" },
+        "email": { "type": "string" },
+        "fullName": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "storeId", "email", "fullName", "createdAt"]
+    },
+    "FirestoreProduct": {
+      "title": "Product",
+      "description": "Synchronized inventory product item in store catalog",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "firestoreId": { "type": "string" },
+        "userId": { "type": "string" },
+        "name": { "type": "string" },
+        "barcode": { "type": "string" },
+        "cartonBarcode": { "type": "string" },
+        "price": { "type": "number" },
+        "purchasePrice": { "type": "number" },
+        "stock": { "type": "number" },
+        "unitsPerCarton": { "type": "integer" },
+        "category": { "type": "string" },
+        "updatedAt": { "type": "number" }
+      },
+      "required": ["name", "price", "stock"]
+    },
+    "PurchaseInvoice": {
+      "title": "Purchase Invoice",
+      "description": "Supplier purchase invoice or paper receipt",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "supplierName": { "type": "string" },
+        "invoiceNumber": { "type": "string" },
+        "invoiceDate": { "type": "string" },
+        "totalCost": { "type": "number" },
+        "paidAmount": { "type": "number" },
+        "remainingDebt": { "type": "number" },
+        "createdAt": { "type": "number" }
+      },
+      "required": ["id", "supplierName", "totalCost"]
+    },
+    "SaleTransaction": {
+      "title": "Sale Transaction",
+      "description": "Customer sales transaction completed at POS",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "totalAmount": { "type": "number" },
+        "cashierUid": { "type": "string" },
+        "cashierName": { "type": "string" },
+        "timestamp": { "type": "number" }
+      },
+      "required": ["id", "totalAmount", "timestamp"]
+    },
+    "CloudInvoice": {
+      "title": "Cloud Invoice",
+      "description": "Synchronized POS invoice with line items",
+      "type": "object",
+      "properties": {
+        "invoiceId": { "type": "string" },
+        "dateMillis": { "type": "integer" },
+        "customerName": { "type": "string" },
+        "paymentMethod": { "type": "string" },
+        "subtotal": { "type": "number" },
+        "totalQuantity": { "type": "integer" }
+      },
+      "required": ["invoiceId", "dateMillis"]
+    },
+    "WorkerLocationRecord": {
+      "title": "Worker Location Record",
+      "description": "Live GPS coordinates of workers reporting to manager",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "integer" },
+        "workerName": { "type": "string" },
+        "latitude": { "type": "number" },
+        "longitude": { "type": "number" },
+        "statusNote": { "type": "string" },
+        "timestamp": { "type": "number" }
+      },
+      "required": ["userId", "workerName", "latitude", "longitude"]
+    },
+    "CloudBackupRecord": {
+      "title": "Cloud Backup Record",
+      "description": "Encrypted SQLite backup snapshot for Pro accounts",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "fileName": { "type": "string" },
+        "dateMillis": { "type": "integer" },
+        "formattedDate": { "type": "string" },
+        "sizeBytes": { "type": "integer" },
+        "base64Data": { "type": "string" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "fileName", "base64Data", "updatedAt"]
+    },
+    "ProUpgradeRequest": {
+      "title": "Pro Upgrade Request",
+      "description": "Manager request to upgrade account to Pro cloud sync with phone contact",
+      "type": "object",
+      "properties": {
+        "requestId": { "type": "string" },
+        "managerUid": { "type": "string" },
+        "managerName": { "type": "string" },
+        "managerEmail": { "type": "string" },
+        "phone": { "type": "string" },
+        "branchName": { "type": "string" },
+        "status": { "type": "string", "enum": ["PENDING", "APPROVED", "REJECTED", "LITE_ACCOUNT_CREATED"] },
+        "note": { "type": "string" },
+        "requestedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["requestId", "managerUid", "phone", "status"]
+    }
+  },
+  "firestore": {
+    "/pro_upgrade_requests/{requestId}": {
+      "schema": { "$ref": "ProUpgradeRequest" },
+      "description": "Manager requests for Pro subscription upgrade"
+    },
+    "/staff_accounts/{accountId}": {
+      "schema": { "$ref": "StaffAccount" },
+      "description": "Store employees and managerial role credentials"
+    },
+    "/admins/{adminId}": {
+      "schema": { "$ref": "AdminRecord" },
+      "description": "Store owners and high-privilege administrators"
+    },
+    "/users/{userId}/products/{productId}": {
+      "schema": { "$ref": "FirestoreProduct" },
+      "description": "Per-account or store products inventory"
+    },
+    "/users/{userId}/purchase_invoices/{invoiceId}": {
+      "schema": { "$ref": "PurchaseInvoice" },
+      "description": "Supplier purchase invoices"
+    },
+    "/users/{userId}/sales/{saleId}": {
+      "schema": { "$ref": "SaleTransaction" },
+      "description": "Sales records"
+    },
+    "/users/{userId}/invoices/{invoiceId}": {
+      "schema": { "$ref": "CloudInvoice" },
+      "description": "Store customer invoices issued by workers or manager"
+    },
+    "/users/{userId}/worker_locations/{workerId}": {
+      "schema": { "$ref": "WorkerLocationRecord" },
+      "description": "Live GPS coordinates of workers reporting to manager"
+    },
+    "/users/{userId}/location_history/{historyId}": {
+      "schema": { "$ref": "WorkerLocationRecord" },
+      "description": "Historical GPS coordinates of workers"
+    },
+    "/users/{userId}/cloud_backups/{backupId}": {
+      "schema": { "$ref": "CloudBackupRecord" },
+      "description": "Encrypted cloud database backups for Pro accounts"
+    },
+    "/worker_locations/{workerId}": {
+      "schema": { "$ref": "WorkerLocationRecord" },
+      "description": "Root team worker GPS locations"
+    },
+    "/stores/{storeId}/products/{productId}": {
+      "schema": { "$ref": "FirestoreProduct" },
+      "description": "Shared multi-device store catalog"
+    }
+  }
+}

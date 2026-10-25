@@ -1,4 +1,5 @@
 import com.google.gms.googleservices.GoogleServicesPlugin.MissingGoogleServicesStrategy
+import java.time.Duration
 
 plugins {
   alias(libs.plugins.android.application)
@@ -46,12 +47,9 @@ android {
 
   buildTypes {
     release {
-      isCrunchPngs = true
+      isCrunchPngs = false
       isMinifyEnabled = true
       isShrinkResources = true
-      ndk {
-        abiFilters += listOf("arm64-v8a", "armeabi-v7a")
-      }
       proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
       // Do not remove or modify this signingConfig assignment. It is necessary for Android apps in
       // AI Studio.
@@ -65,34 +63,6 @@ android {
       signingConfig = signingConfigs.getByName("debugConfig")
     }
   }
-  bundle {
-    language {
-      enableSplit = true
-    }
-    density {
-      enableSplit = true
-    }
-    abi {
-      enableSplit = true
-    }
-  }
-  packaging {
-    resources {
-      excludes += setOf(
-        "/META-INF/{AL2.0,LGPL2.1}",
-        "/META-INF/DEPENDENCIES",
-        "/META-INF/LICENSE*",
-        "/META-INF/NOTICE*",
-        "/META-INF/*.kotlin_module",
-        "/META-INF/versions/9/previous-compilation-data.bin",
-        "DebugProbesKt.bin",
-        "kotlin-tooling-metadata.json"
-      )
-    }
-    jniLibs {
-      useLegacyPackaging = false
-    }
-  }
   compileOptions {
     sourceCompatibility = JavaVersion.VERSION_11
     targetCompatibility = JavaVersion.VERSION_11
@@ -102,6 +72,11 @@ android {
     buildConfig = true
   }
   testOptions { unitTests { isIncludeAndroidResources = true } }
+  packaging {
+    jniLibs {
+      useLegacyPackaging = true
+    }
+  }
   dependenciesInfo {
     includeInApk = false
     includeInBundle = true
@@ -118,6 +93,14 @@ secrets {
 
 googleServices { missingGoogleServicesStrategy = MissingGoogleServicesStrategy.WARN }
 
+tasks.withType<Test> {
+  failFast = true
+  timeout.set(Duration.ofMinutes(2))
+  testLogging {
+    events("passed", "failed", "skipped")
+  }
+}
+
 // Some unused dependencies are commented out below instead of being removed.
 // This makes it easy to add them back in the future if needed.
 dependencies {
@@ -133,7 +116,7 @@ dependencies {
   implementation(libs.androidx.lifecycle.runtime.compose)
   implementation(libs.androidx.lifecycle.runtime.ktx)
   implementation(libs.androidx.lifecycle.viewmodel.compose)
-  // implementation(libs.androidx.navigation.compose)
+  implementation(libs.androidx.navigation.compose)
   implementation(libs.androidx.room.ktx)
   implementation(libs.androidx.room.runtime)
   implementation(libs.androidx.datastore.preferences)
@@ -146,17 +129,16 @@ dependencies {
   implementation(libs.androidx.camera.camera2)
   implementation(libs.androidx.camera.lifecycle)
   implementation(libs.androidx.camera.view)
-  implementation("com.google.zxing:core:3.5.3")
+  implementation(libs.zxing.core)
   implementation(platform(libs.firebase.bom))
   implementation(libs.firebase.firestore)
   implementation(libs.firebase.auth)
   implementation(libs.androidx.credentials)
   implementation(libs.androidx.credentials.play.services)
   implementation(libs.googleid)
-  implementation("androidx.work:work-runtime-ktx:2.10.0")
-  // Use Play Services dynamic ML Kit modules instead of bundled 85MB native binaries
-  implementation("com.google.android.gms:play-services-mlkit-text-recognition:19.0.1")
-  implementation("com.google.android.gms:play-services-mlkit-barcode-scanning:18.3.1")
+  implementation(libs.androidx.work.runtime.ktx)
+  implementation("com.google.mlkit:text-recognition:16.0.1")
+  implementation("com.google.mlkit:barcode-scanning:17.3.0")
   implementation("com.patrykandpatryk.vico:compose:1.15.0")
   implementation("com.patrykandpatryk.vico:compose-m3:1.15.0")
   implementation("com.patrykandpatryk.vico:core:1.15.0")

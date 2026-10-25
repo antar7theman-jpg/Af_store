@@ -179,7 +179,7 @@ private fun buildPdfPayloadForArchivedInvoice(
         )
     }
 
-    val formattedDateTime = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.ENGLISH).format(Date(inv.dateMillis))
+    val formattedDateTime = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(inv.dateMillis))
 
     return InvoicePdfPayload(
         storeName = storeName,
@@ -308,14 +308,15 @@ fun InvoicesArchiveScreen(viewModel: AntarSalesViewModel) {
                 modifier = Modifier.padding(12.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Column(
+                Row(
                     modifier = Modifier.fillMaxWidth(),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.weight(1f)
                     ) {
                         Surface(
                             shape = CircleShape,
@@ -328,45 +329,35 @@ fun InvoicesArchiveScreen(viewModel: AntarSalesViewModel) {
                                 modifier = Modifier.padding(6.dp).size(20.dp)
                             )
                         }
-                        Column(modifier = Modifier.weight(1f)) {
+                        Column {
                             Text(
                                 text = "أرشيف الفواتير والمبيعات",
                                 fontWeight = FontWeight.ExtraBold,
-                                fontSize = 14.5.sp,
-                                maxLines = 1,
-                                softWrap = false,
-                                overflow = TextOverflow.Ellipsis
+                                fontSize = 15.5.sp
                             )
                             Text(
                                 text = "محفوظة محلياً في Room • جاهزة للمعاينة والطباعة والمرتجعات",
-                                fontSize = 10.sp,
+                                fontSize = 10.5.sp,
                                 color = Color(0xFF059669),
-                                fontWeight = FontWeight.SemiBold,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
+                                fontWeight = FontWeight.SemiBold
                             )
                         }
                     }
 
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Box(modifier = Modifier.weight(1f)) {
-                            UniversalReportHeaderButton(
-                                title = "مسح QR",
-                                tag = "scan_invoice_qr_btn",
-                                onClick = { showQrScannerDialog = true }
-                            )
-                        }
-                        Box(modifier = Modifier.weight(1f)) {
-                            UniversalReportHeaderButton(
-                                title = "التقارير PDF",
-                                tag = "invoices_pdf_report_btn",
-                                onClick = { showInvoicesPdfReportDialog = true }
-                            )
-                        }
+                        UniversalReportHeaderButton(
+                            title = "مسح QR",
+                            tag = "scan_invoice_qr_btn",
+                            onClick = { showQrScannerDialog = true }
+                        )
+                        UniversalReportHeaderButton(
+                            title = "التقارير PDF",
+                            tag = "invoices_pdf_report_btn",
+                            onClick = { showInvoicesPdfReportDialog = true }
+                        )
                     }
                 }
 
@@ -594,7 +585,7 @@ fun InvoicesArchiveScreen(viewModel: AntarSalesViewModel) {
                     contentType = { _, _ -> "archived_invoice" }
                 ) { _, inv ->
                     val dateStr = remember(inv.dateMillis) {
-                        SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.ENGLISH).format(Date(inv.dateMillis))
+                        SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(inv.dateMillis))
                     }
                     val isPending = inv.isPendingPreSale
                     val isCompleted = inv.isCompletedPreSale
@@ -841,7 +832,7 @@ fun InvoicesArchiveScreen(viewModel: AntarSalesViewModel) {
                                                 )
                                             }
                                             if (inv.expectedDeliveryDate > 0) {
-                                                val expDateStr = SimpleDateFormat("dd/MM/yyyy", Locale.ENGLISH).format(Date(inv.expectedDeliveryDate))
+                                                val expDateStr = SimpleDateFormat("dd/MM/yyyy", Locale.getDefault()).format(Date(inv.expectedDeliveryDate))
                                                 Text(
                                                     text = "موعد الاستلام المتوقع: $expDateStr",
                                                     fontSize = 10.sp,
@@ -2072,7 +2063,7 @@ fun PurchaseInvoicesScreen(viewModel: AntarSalesViewModel) {
                     contentType = { _, _ -> "purchase_invoice" }
                 ) { _, inv ->
                     val dateStr = remember(inv.dateMillis) {
-                        SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.ENGLISH).format(Date(inv.dateMillis))
+                        SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(inv.dateMillis))
                     }
                     val hasDebt = inv.remainingDebt > 0.009
                     Card(
@@ -3280,7 +3271,7 @@ private fun PurchaseInvoiceDetailsDialog(
 ) {
     val items = remember(invoice.itemsJson) { invoice.getItems() }
     val dateStr = remember(invoice.dateMillis) {
-        SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.ENGLISH).format(Date(invoice.dateMillis))
+        SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(invoice.dateMillis))
     }
     var paymentInput by remember(invoice.remainingDebt) {
         mutableStateOf(
@@ -4592,7 +4583,7 @@ fun CustomersScreen(viewModel: AntarSalesViewModel) {
                                     horizontalArrangement = Arrangement.SpaceBetween,
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    val formattedDate = SimpleDateFormat("yyyy/MM/dd HH:mm", Locale.ENGLISH).format(Date(inv.dateMillis))
+                                    val formattedDate = SimpleDateFormat("yyyy/MM/dd HH:mm", Locale.getDefault()).format(Date(inv.dateMillis))
                                     Column {
                                         Text("فاتورة #${inv.invoiceId}", fontWeight = FontWeight.Bold, fontSize = 11.5.sp)
                                         Text(formattedDate, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)

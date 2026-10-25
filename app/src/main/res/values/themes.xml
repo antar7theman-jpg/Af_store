@@ -1,4 +1,24 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.AFStore" parent="android:Theme.Material.Light.NoActionBar" />
+    <style name="Theme.AFStore" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:layoutDirection">rtl</item>
+        <item name="android:dialogTheme">@style/Theme.AFStore.Dialog</item>
+        <item name="android:alertDialogTheme">@style/Theme.AFStore.Dialog</item>
+    </style>
+
+    <style name="Theme.AFStore.Dialog" parent="android:Theme.Material.Light.Dialog">
+        <item name="android:layoutDirection">rtl</item>
+        <item name="android:windowAnimationStyle">@style/Theme.AFStore.WindowAnimation</item>
+    </style>
+
+    <style name="Theme.AFStore.WindowAnimation" parent="@android:style/Animation.Dialog">
+        <item name="android:windowEnterAnimation">@android:anim/fade_in</item>
+        <item name="android:windowExitAnimation">@android:anim/fade_out</item>
+    </style>
+
+    <style name="Theme.MyApplication" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:layoutDirection">rtl</item>
+        <item name="android:dialogTheme">@style/Theme.AFStore.Dialog</item>
+        <item name="android:alertDialogTheme">@style/Theme.AFStore.Dialog</item>
+    </style>
 </resources>

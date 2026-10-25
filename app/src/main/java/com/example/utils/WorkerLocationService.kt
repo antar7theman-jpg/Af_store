@@ -29,7 +29,12 @@ class WorkerLocationService : Service() {
             .setContentText("المزامنة التلقائية للموقع نشطة مع الإدارة السحابية")
             .setSmallIcon(android.R.drawable.ic_menu_mylocation)
             .build()
-        startForeground(1, notification)
+        try {
+            startForeground(1, notification)
+        } catch (e: Exception) {
+            e.printStackTrace()
+            stopSelf()
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {

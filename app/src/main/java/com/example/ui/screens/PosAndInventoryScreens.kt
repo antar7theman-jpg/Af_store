@@ -50,7 +50,6 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -239,14 +238,6 @@ fun PosScreen(
             cartItems.find { it.product.id == ev.productId }
         }
     }
-
-    val cartListState = rememberLazyListState()
-    LaunchedEffect(cartItems.size) {
-        if (cartItems.isNotEmpty()) {
-            cartListState.animateScrollToItem(cartItems.size - 1)
-        }
-    }
-
 
 
     Box(
@@ -736,7 +727,6 @@ fun PosScreen(
                                     }
                                 } else {
                                     LazyColumn(
-                                        state = cartListState,
                                         modifier = Modifier.fillMaxSize(),
                                         verticalArrangement = Arrangement.spacedBy(10.dp),
                                         contentPadding = PaddingValues(vertical = 10.dp, horizontal = 2.dp)
@@ -861,13 +851,11 @@ fun PosScreen(
                                                                 fontSize = 12.sp,
                                                                 color = MaterialTheme.colorScheme.primary,
                                                                 fontWeight = FontWeight.ExtraBold,
-                                                                maxLines = 1,
-                                                                overflow = TextOverflow.Ellipsis,
-                                                                modifier = Modifier.weight(1f, fill = false)
+                                                                maxLines = 1
                                                             )
                                                             Row(
                                                                 verticalAlignment = Alignment.CenterVertically,
-                                                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                                                horizontalArrangement = Arrangement.spacedBy(4.dp)
                                                             ) {
                                                                 Surface(
                                                                     onClick = {
@@ -894,27 +882,38 @@ fun PosScreen(
                                                                 Surface(
                                                                     shape = RoundedCornerShape(6.dp),
                                                                     color = if (semantic.isDark) MaterialTheme.colorScheme.surfaceContainerHighest else Color(0xFFF1F5F9),
-                                                                    modifier = Modifier
-                                                                        .widthIn(min = 38.dp)
-                                                                        .heightIn(min = 26.dp)
-                                                                        .padding(horizontal = 2.dp)
+                                                                    modifier = Modifier.padding(horizontal = 2.dp)
                                                                 ) {
-                                                                    Box(
-                                                                        contentAlignment = Alignment.Center,
-                                                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                                                    ) {
-                                                                        Text(
-                                                                            text = "${item.effectiveUnitsDeducted}",
-                                                                            fontWeight = FontWeight.ExtraBold,
-                                                                            fontSize = 12.sp,
-                                                                            maxLines = 1,
-                                                                            softWrap = false,
-                                                                            textAlign = TextAlign.Center,
-                                                                            color = if (semantic.isDark) {
-                                                                                MaterialTheme.colorScheme.onSurface
-                                                                            } else {
-                                                                                Color(0xFF0F172A)
-                                                                            }
+                                                                    Text(
+                                                                        text = "${item.effectiveUnitsDeducted}",
+                                                                        fontWeight = FontWeight.ExtraBold,
+                                                                        fontSize = 12.sp,
+                                                                        color = if (semantic.isDark) {
+                                                                            MaterialTheme.colorScheme.onSurface
+                                                                        } else {
+                                                                            Color(0xFF0F172A)
+                                                                        },
+                                                                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
+                                                                    )
+                                                                }
+                                                                Surface(
+                                                                    onClick = {
+                                                                        if (isPreSaleMode) viewModel.adjustPreSaleCartItemUnits(item.product.id, 1) else viewModel.adjustCartItemUnits(item.product.id, 1)
+                                                                    },
+                                                                    shape = RoundedCornerShape(7.dp),
+                                                                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.20f),
+                                                                    border = BorderStroke(
+                                                                        1.2.dp,
+                                                                        MaterialTheme.colorScheme.primary.copy(alpha = if (semantic.isDark) 0.65f else 0.90f)
+                                                                    ),
+                                                                    modifier = Modifier.size(26.dp)
+                                                                ) {
+                                                                    Box(contentAlignment = Alignment.Center) {
+                                                                        Icon(
+                                                                            Icons.Default.Add,
+                                                                            contentDescription = "زيادة",
+                                                                            tint = MaterialTheme.colorScheme.primary,
+                                                                            modifier = Modifier.size(14.dp)
                                                                         )
                                                                     }
                                                                 }
@@ -2074,7 +2073,7 @@ fun InvoicePreviewModal(
     onDismiss: () -> Unit
 ) {
     val dateFormatted = remember(invoice.dateMillis) {
-        SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.ENGLISH).format(Date(invoice.dateMillis))
+        SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(invoice.dateMillis))
     }
     AlertDialog(
         onDismissRequest = onDismiss,

@@ -15,14 +15,7 @@ class AFStoreApplication : Application(), ImageLoaderFactory {
     override fun attachBaseContext(base: android.content.Context) {
         val locale = java.util.Locale("ar")
         java.util.Locale.setDefault(locale)
-        try {
-            val config = android.content.res.Configuration(base.resources.configuration)
-            config.setLocale(locale)
-            config.setLayoutDirection(locale)
-            super.attachBaseContext(base.createConfigurationContext(config))
-        } catch (t: Throwable) {
-            super.attachBaseContext(base)
-        }
+        super.attachBaseContext(base)
     }
 
     override fun onCreate() {
@@ -37,9 +30,9 @@ class AFStoreApplication : Application(), ImageLoaderFactory {
         resources.updateConfiguration(config, resources.displayMetrics)
         initializeFirebase(this)
         try {
-            AutoSyncWorker.schedulePeriodicSync(this)
+            com.example.workers.IncrementalSyncWorker.schedulePeriodic(this, intervalMinutes = 15)
         } catch (t: Throwable) {
-            Log.e("AFStoreApplication", "Auto-sync scheduling failed", t)
+            Log.e("AFStoreApplication", "Incremental auto-sync scheduling failed", t)
         }
     }
 
@@ -60,9 +53,10 @@ class AFStoreApplication : Application(), ImageLoaderFactory {
             if (initialized == null && FirebaseApp.getApps(ctx).isEmpty()) {
                 try {
                     val options = com.google.firebase.FirebaseOptions.Builder()
-                        .setApplicationId("1:264866368935:android:wkyzp123456789")
-                        .setProjectId("af-store-applet")
-                        .setApiKey("AIzaSyDummyKeyForAppletEnvironment12345")
+                        .setApplicationId("1:1041320238237:android:2d3363baf5394e68980874")
+                        .setProjectId("gen-lang-client-0906732954")
+                        .setApiKey("AIzaSyD4orBGv1rNbLt_sgxV623LhT7PfFgLOg8")
+                        .setStorageBucket("gen-lang-client-0906732954.firebasestorage.app")
                         .build()
                     FirebaseApp.initializeApp(ctx, options)
                 } catch (inner: Throwable) {

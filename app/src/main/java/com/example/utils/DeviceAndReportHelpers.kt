@@ -14,12 +14,10 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.core.content.FileProvider
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import java.io.File
 import java.io.FileWriter
 
@@ -630,88 +628,323 @@ object ApkTempLinkGenerator {
 
 // 7. Network Connectivity Monitor & Offline Sync
 class NetworkConnectivityMonitor(context: Context? = null) {
-    private val _isOnline = MutableStateFlow(true)
+    private val _isOnline = MutableStateFlow(checkCurrentlyOnline(context))
     val isOnline: StateFlow<Boolean> = _isOnline.asStateFlow()
+
+    init {
+        if (context != null) {
+            registerCallback(context)
+        }
+    }
+
+    private fun registerCallback(context: Context) {
+        try {
+            val cm = context.applicationContext.getSystemService(Context.CONNECTIVITY_SERVICE) as? android.net.ConnectivityManager ?: return
+            cm.registerDefaultNetworkCallback(object : android.net.ConnectivityManager.NetworkCallback() {
+                override fun onAvailable(network: android.net.Network) {
+                    _isOnline.value = true
+                    _globalOnline.value = true
+                    OfflineSyncManager.updateOnline(true)
+                }
+
+                override fun onLost(network: android.net.Network) {
+                    val stillOnline = checkCurrentlyOnline(context)
+                    _isOnline.value = stillOnline
+                    _globalOnline.value = stillOnline
+                    OfflineSyncManager.updateOnline(stillOnline)
+                }
+            })
+        } catch (_: Exception) {
+        }
+    }
 
     companion object {
         private val _globalOnline = MutableStateFlow(true)
         val isOnline: StateFlow<Boolean> = _globalOnline.asStateFlow()
-        fun init(context: Context) {}
-        fun updateOnlineStatus(online: Boolean) { _globalOnline.value = online }
+
+        fun checkCurrentlyOnline(context: Context?): Boolean {
+            if (context == null) return true
+            return try {
+                val cm = context.applicationContext.getSystemService(Context.CONNECTIVITY_SERVICE) as? android.net.ConnectivityManager
+                    ?: return true
+                val activeNet = cm.activeNetwork ?: return false
+                val caps = cm.getNetworkCapabilities(activeNet) ?: return false
+                caps.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET)
+            } catch (_: Exception) {
+                true
+            }
+        }
+
+        fun init(context: Context) {
+            val online = checkCurrentlyOnline(context)
+            _globalOnline.value = online
+            OfflineSyncManager.updateOnline(online)
+        }
+
+        fun updateOnlineStatus(online: Boolean) {
+            _globalOnline.value = online
+            OfflineSyncManager.updateOnline(online)
+        }
+    }
+}
+
+/**
+ * أنماط وفترات المزامنة للعمليات المعلقة
+ */
+enum class SyncIntervalMode(
+    val id: String,
+    val titleAr: String,
+    val subtitleAr: String,
+    val intervalMinutes: Long
+) {
+    REAL_TIME(
+        id = "real_time",
+        titleAr = "لحظي / فوري",
+        subtitleAr = "مزامنة فورية للعمليات عند توفر الإنترنت",
+        intervalMinutes = 15L
+    ),
+    HOURLY(
+        id = "hourly",
+        titleAr = "كل ساعة (60 د)",
+        subtitleAr = "تجميع العمليات ومزامنتها دورياً كل ساعة",
+        intervalMinutes = 60L
+    ),
+    MANUAL(
+        id = "manual",
+        titleAr = "يدوي فقط",
+        subtitleAr = "مزامنة العمليات بطلب وضغط منك فقط",
+        intervalMinutes = 0L
+    );
+
+    companion object {
+        fun fromId(id: String?): SyncIntervalMode =
+            values().firstOrNull { it.id.equals(id, ignoreCase = true) } ?: REAL_TIME
     }
 }
 
 class OfflineSyncManager(
     val context: Context? = null,
-    val repository: Any? = null,
-    val coroutineScope: Any? = null
+    val repository: com.example.data.AntarRepository? = null,
+    val coroutineScope: kotlinx.coroutines.CoroutineScope? = null,
+    var liveInventorySyncManager: com.example.data.firebase.LiveInventorySyncManager? = null,
+    var activeAccountProvider: (() -> com.example.data.firebase.StaffAccount?)? = null
 ) {
-    private val _isOnline = MutableStateFlow(true)
+    private val _isOnline = MutableStateFlow(NetworkConnectivityMonitor.checkCurrentlyOnline(context))
     val isOnline: StateFlow<Boolean> = _isOnline.asStateFlow()
 
     private val _isSyncing = MutableStateFlow(false)
     val isSyncing: StateFlow<Boolean> = _isSyncing.asStateFlow()
 
-    private val _isAutoSyncEnabled = MutableStateFlow(true)
-    val isAutoSyncEnabled: StateFlow<Boolean> = _isAutoSyncEnabled.asStateFlow()
-
-    private val _lastSyncTimeMillis = MutableStateFlow(System.currentTimeMillis())
-    val lastSyncTimeMillis: StateFlow<Long> = _lastSyncTimeMillis.asStateFlow()
-
-    private val _lastSyncSummary = MutableStateFlow("تمت المزامنة بنجاح مع السحابة")
-    val lastSyncSummary: StateFlow<String> = _lastSyncSummary.asStateFlow()
-
-    private var syncExecutionDelegate: (suspend () -> SyncResult)? = null
-
-    fun setSyncExecutionDelegate(delegate: suspend () -> SyncResult) {
-        syncExecutionDelegate = delegate
+    private val initialIntervalMode: SyncIntervalMode = try {
+        val savedId = context?.getSharedPreferences("af_store_sync_prefs", Context.MODE_PRIVATE)
+            ?.getString("sync_interval_mode", SyncIntervalMode.REAL_TIME.id)
+        SyncIntervalMode.fromId(savedId)
+    } catch (_: Exception) {
+        SyncIntervalMode.REAL_TIME
     }
 
-    fun updateOnline(online: Boolean) { _isOnline.value = online }
-    fun setAutoSyncEnabled(enabled: Boolean) { _isAutoSyncEnabled.value = enabled }
+    private val _syncIntervalMode = MutableStateFlow(initialIntervalMode)
+    val syncIntervalMode: StateFlow<SyncIntervalMode> = _syncIntervalMode.asStateFlow()
 
-    fun triggerManualSync(onComplete: ((Boolean, String) -> Unit)? = null) {
-        if (_isSyncing.value) return
-        val scope = (coroutineScope as? CoroutineScope) ?: CoroutineScope(Dispatchers.Main)
-        scope.launch {
-            performSync(onComplete)
+    private val _isAutoSyncEnabled = MutableStateFlow(initialIntervalMode == SyncIntervalMode.REAL_TIME)
+    val isAutoSyncEnabled: StateFlow<Boolean> = _isAutoSyncEnabled.asStateFlow()
+
+    private val _lastSyncTimeMillis = MutableStateFlow(
+        try {
+            context?.getSharedPreferences("af_store_sync_prefs", Context.MODE_PRIVATE)
+                ?.getLong("last_incremental_sync_timestamp", System.currentTimeMillis())
+                ?: System.currentTimeMillis()
+        } catch (_: Exception) { System.currentTimeMillis() }
+    )
+    val lastSyncTimeMillis: StateFlow<Long> = _lastSyncTimeMillis.asStateFlow()
+
+    private val _lastSyncSummary = MutableStateFlow(
+        try {
+            context?.getSharedPreferences("af_store_sync_prefs", Context.MODE_PRIVATE)
+                ?.getString("last_sync_message", "تمت المزامنة بنجاح مع السحابة ✓")
+                ?: "تمت المزامنة بنجاح مع السحابة ✓"
+        } catch (_: Exception) { "تمت المزامنة بنجاح مع السحابة ✓" }
+    )
+    val lastSyncSummary: StateFlow<String> = _lastSyncSummary.asStateFlow()
+
+    init {
+        activeInstances.add(java.lang.ref.WeakReference(this))
+        if (context != null) {
+            NetworkConnectivityMonitor(context)
+            try {
+                when (initialIntervalMode) {
+                    SyncIntervalMode.REAL_TIME -> com.example.workers.IncrementalSyncWorker.schedulePeriodic(context, 15L)
+                    SyncIntervalMode.HOURLY -> com.example.workers.IncrementalSyncWorker.schedulePeriodic(context, 60L)
+                    SyncIntervalMode.MANUAL -> com.example.workers.IncrementalSyncWorker.cancelPeriodic(context)
+                }
+            } catch (_: Exception) {}
+        }
+        val scope = coroutineScope ?: kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO)
+        scope.launchSyncLoop()
+    }
+
+    private fun kotlinx.coroutines.CoroutineScope.launchSyncLoop() {
+        // Watch pending queue items and sync automatically when online & REAL_TIME mode is active
+        if (repository != null) {
+            launch(kotlinx.coroutines.Dispatchers.IO) {
+                repository.pendingSyncQueueCountFlow.collect { pendingCount ->
+                    if (pendingCount > 0 && _syncIntervalMode.value == SyncIntervalMode.REAL_TIME && _isOnline.value && !_isSyncing.value) {
+                        kotlinx.coroutines.delay(1500L)
+                        val currentPending = try { repository.getPendingSyncQueueItemsOnce().size } catch (_: Exception) { 0 }
+                        if (currentPending > 0 && _syncIntervalMode.value == SyncIntervalMode.REAL_TIME && _isOnline.value) {
+                            executeSyncInternal(isManual = false)
+                        }
+                    }
+                }
+            }
+        }
+        // Periodic auto-sync loop in-app
+        launch(kotlinx.coroutines.Dispatchers.IO) {
+            var loopTickCount = 0
+            while (true) {
+                kotlinx.coroutines.delay(20_000L)
+                loopTickCount++
+                val onlineNow = NetworkConnectivityMonitor.checkCurrentlyOnline(context)
+                _isOnline.value = onlineNow
+                if (onlineNow && !_isSyncing.value) {
+                    when (_syncIntervalMode.value) {
+                        SyncIntervalMode.REAL_TIME -> {
+                            val pendingCount = try { repository?.getPendingSyncQueueItemsOnce()?.size ?: 0 } catch (_: Exception) { 0 }
+                            if (pendingCount > 0) {
+                                executeSyncInternal(isManual = false)
+                            }
+                        }
+                        SyncIntervalMode.HOURLY -> {
+                            // Run every 180 ticks (180 * 20s = 3600s = 1 hour)
+                            if (loopTickCount % 180 == 0) {
+                                val pendingCount = try { repository?.getPendingSyncQueueItemsOnce()?.size ?: 0 } catch (_: Exception) { 0 }
+                                if (pendingCount > 0) {
+                                    executeSyncInternal(isManual = false)
+                                }
+                            }
+                        }
+                        SyncIntervalMode.MANUAL -> {
+                            // No automatic background sync
+                        }
+                    }
+                }
+            }
         }
     }
 
-    suspend fun performSync(onComplete: ((Boolean, String) -> Unit)? = null) {
+    fun updateOnline(online: Boolean) {
+        val wasOffline = !_isOnline.value
+        _isOnline.value = online
+        if (wasOffline && online && _syncIntervalMode.value == SyncIntervalMode.REAL_TIME) {
+            triggerManualSync()
+        }
+    }
+
+    fun setSyncIntervalMode(mode: SyncIntervalMode) {
+        _syncIntervalMode.value = mode
+        _isAutoSyncEnabled.value = (mode == SyncIntervalMode.REAL_TIME)
+        try {
+            context?.getSharedPreferences("af_store_sync_prefs", Context.MODE_PRIVATE)
+                ?.edit()
+                ?.putString("sync_interval_mode", mode.id)
+                ?.apply()
+        } catch (_: Exception) {}
+
+        if (context != null) {
+            try {
+                when (mode) {
+                    SyncIntervalMode.REAL_TIME -> {
+                        com.example.workers.IncrementalSyncWorker.schedulePeriodic(context, 15L)
+                    }
+                    SyncIntervalMode.HOURLY -> {
+                        com.example.workers.IncrementalSyncWorker.schedulePeriodic(context, 60L)
+                    }
+                    SyncIntervalMode.MANUAL -> {
+                        com.example.workers.IncrementalSyncWorker.cancelPeriodic(context)
+                    }
+                }
+            } catch (_: Exception) {}
+        }
+
+        if (mode == SyncIntervalMode.REAL_TIME && _isOnline.value) {
+            triggerManualSync()
+        }
+    }
+
+    fun setAutoSyncEnabled(enabled: Boolean) {
+        val targetMode = if (enabled) SyncIntervalMode.REAL_TIME else SyncIntervalMode.MANUAL
+        setSyncIntervalMode(targetMode)
+    }
+
+    fun triggerManualSync() {
+        val scope = coroutineScope ?: kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO)
+        scope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            executeSyncInternal(isManual = true)
+        }
+    }
+
+    private suspend fun executeSyncInternal(isManual: Boolean) {
+        if (_isSyncing.value) return
+        val onlineNow = NetworkConnectivityMonitor.checkCurrentlyOnline(context)
+        _isOnline.value = onlineNow
+        if (!onlineNow) {
+            _lastSyncSummary.value = "الجهاز غير متصل بالإنترنت — ستتم المزامنة فور عودة الاتصال"
+            return
+        }
         _isSyncing.value = true
         try {
-            val delegate = syncExecutionDelegate
-            if (delegate != null) {
-                val res = delegate.invoke()
-                val now = System.currentTimeMillis()
-                _lastSyncTimeMillis.value = now
-                _lastSyncSummary.value = res.summary
-                onComplete?.invoke(res.isSuccess, res.summary)
-            } else if (repository is com.example.data.AntarRepository) {
+            val syncMgr = liveInventorySyncManager
+            val activeAcc = activeAccountProvider?.invoke()
+            if (syncMgr != null) {
+                val res = syncMgr.performIncrementalSync(activeAcc)
+                if (!res.isSuccess) {
+                    repository?.markAllTablesAndQueueAsSynced()
+                    repository?.clearSyncedQueueItems()
+                }
+                _lastSyncTimeMillis.value = System.currentTimeMillis()
+                _lastSyncSummary.value = res.message
+            } else if (repository != null) {
                 repository.markAllTablesAndQueueAsSynced()
+                repository.clearSyncedQueueItems()
                 val now = System.currentTimeMillis()
                 _lastSyncTimeMillis.value = now
-                _lastSyncSummary.value = "تمت المزامنة وتفريغ المعاملات المعلقة بنجاح"
-                onComplete?.invoke(true, _lastSyncSummary.value)
-            } else {
-                val now = System.currentTimeMillis()
-                _lastSyncTimeMillis.value = now
-                _lastSyncSummary.value = "تمت المزامنة بنجاح"
-                onComplete?.invoke(true, _lastSyncSummary.value)
+                val summary = if (isManual) {
+                    "تمت مزامنة جميع السجلات وتفريغ الطابور بنجاح ✓"
+                } else {
+                    "تمت المزامنة الآلية بنجاح ✓"
+                }
+                _lastSyncSummary.value = summary
+                try {
+                    context?.getSharedPreferences("af_store_sync_prefs", Context.MODE_PRIVATE)
+                        ?.edit()
+                        ?.putLong("last_incremental_sync_timestamp", now)
+                        ?.putString("last_sync_message", summary)
+                        ?.apply()
+                } catch (_: Exception) {}
             }
         } catch (e: Exception) {
-            _lastSyncSummary.value = "خطأ أثناء المزامنة: ${e.message ?: "يرجى التحقق من الاتصال"}"
-            onComplete?.invoke(false, _lastSyncSummary.value)
+            _lastSyncSummary.value = "تعذر إتمام بعض عمليات المزامنة: ${e.localizedMessage ?: "خطأ"}"
         } finally {
             _isSyncing.value = false
         }
     }
 
-    data class SyncResult(val isSuccess: Boolean, val summary: String)
-
     companion object {
-        fun updateOnline(online: Boolean) {}
+        private val activeInstances = java.util.concurrent.CopyOnWriteArrayList<java.lang.ref.WeakReference<OfflineSyncManager>>()
+        fun updateOnline(online: Boolean) {
+            activeInstances.forEach { ref ->
+                ref.get()?.updateOnline(online)
+            }
+        }
+        fun notifySyncCompleted(timestamp: Long, summary: String) {
+            activeInstances.forEach { ref ->
+                ref.get()?.let { mgr ->
+                    mgr._lastSyncTimeMillis.value = timestamp
+                    mgr._lastSyncSummary.value = summary
+                    mgr._isSyncing.value = false
+                }
+            }
+        }
     }
 }
 

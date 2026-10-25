@@ -13,31 +13,18 @@ import java.util.concurrent.TimeUnit
 typealias NetworkConnectivityMonitor = com.example.utils.NetworkConnectivityMonitor
 typealias OfflineSyncManager = com.example.utils.OfflineSyncManager
 typealias CsvExporter = com.example.utils.CsvExporter
+typealias IncrementalSyncWorker = com.example.workers.IncrementalSyncWorker
 
-// Auto-sync Worker
-class AutoSyncWorker(context: Context, params: WorkerParameters) : Worker(context, params) {
-    override fun doWork(): Result {
-        return try {
-            Result.success()
-        } catch (_: Exception) {
-            Result.retry()
-        }
+// Auto-sync Worker (Delegates to IncrementalSyncWorker for fast delta synchronization)
+class AutoSyncWorker(context: Context, params: WorkerParameters) : androidx.work.CoroutineWorker(context, params) {
+    override suspend fun doWork(): Result {
+        val result = com.example.workers.IncrementalSyncWorker.performDirectIncrementalSync(applicationContext, null)
+        return if (result.isSuccess) Result.success() else Result.retry()
     }
 
     companion object {
-        private const val WORK_NAME = "AFStoreAutoSyncWork"
         fun schedulePeriodicSync(context: Context) {
-            val constraints = Constraints.Builder()
-                .setRequiredNetworkType(NetworkType.CONNECTED)
-                .build()
-            val request = PeriodicWorkRequestBuilder<AutoSyncWorker>(2, TimeUnit.HOURS)
-                .setConstraints(constraints)
-                .build()
-            WorkManager.getInstance(context).enqueueUniquePeriodicWork(
-                WORK_NAME,
-                ExistingPeriodicWorkPolicy.KEEP,
-                request
-            )
+            com.example.workers.IncrementalSyncWorker.schedulePeriodic(context)
         }
     }
 }

@@ -29,13 +29,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.platform.LocalLayoutDirection
-import androidx.compose.ui.unit.LayoutDirection
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.data.models.User
 import com.example.data.models.WorkerLocation
 import com.example.ui.theme.LocalAFStoreSemanticColors
-import com.example.utils.AppFormatUtils.toLatinDigits as formatLatin
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -75,10 +72,9 @@ fun WorkerTrackingDashboardScreen(
                     ?: locationManager?.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
 
                 isLocating = false
-                val activeStaff = vm?.activeStaffAccountState?.value
                 val staffUser = currentUser as? User
-                val userId = activeStaff?.userId?.filter { it.isDigit() }?.toIntOrNull() ?: staffUser?.id ?: 1001
-                val workerName = activeStaff?.fullName?.ifBlank { activeStaff.email } ?: staffUser?.fullName ?: "عامل ميداني"
+                val userId = staffUser?.id ?: 1001
+                val workerName = staffUser?.fullName ?: "عامل ميداني"
 
                 val lat = location?.latitude ?: (36.7538 + (Math.random() - 0.5) * 0.02)
                 val lng = location?.longitude ?: (3.0588 + (Math.random() - 0.5) * 0.02)
@@ -171,7 +167,7 @@ fun WorkerTrackingDashboardScreen(
                     ) {
                         Column {
                             Text(text = "العمال المتصلون حالياً", fontSize = 11.sp, color = semantic.textSecondary)
-                            Text(text = "${com.example.utils.AppFormatUtils.formatInt(workerLocations.size)} عامل نشط باليد", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = semantic.success)
+                            Text(text = "${workerLocations.size} عامل نشط باليد", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = semantic.success)
                         }
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                             Surface(
@@ -303,7 +299,7 @@ fun WorkerTrackingDashboardScreen(
                         color = semantic.textPrimary
                     )
                     Text(
-                        text = "${com.example.utils.AppFormatUtils.formatInt(filteredWorkers.size)} نتيجة",
+                        text = "${filteredWorkers.size} نتيجة",
                         fontSize = 12.sp,
                         color = semantic.textSecondary
                     )
@@ -491,7 +487,7 @@ fun WorkerLocationCard(
                     Icon(Icons.Default.Info, contentDescription = null, modifier = Modifier.size(16.dp).offset(y = (-1).dp), tint = semantic.primary)
                     Text(text = worker.statusNote, fontSize = 13.sp, fontWeight = FontWeight.Medium, color = semantic.textPrimary)
                 }
-                Text(text = "آخر تحديث: ${formatLatin(worker.formattedTime)}", fontSize = 11.sp, color = semantic.textSecondary)
+                Text(text = "آخر تحديث: ${worker.formattedTime}", fontSize = 11.sp, color = semantic.textSecondary)
             }
 
             // Coordinates box
@@ -507,15 +503,13 @@ fun WorkerLocationCard(
                 ) {
                     Column {
                         Text(text = "إحداثيات GPS السحابية الحية", fontSize = 10.sp, color = semantic.textSecondary)
-                        CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
-                            Text(
-                                text = formatLatin(String.format(java.util.Locale.FRANCE, "Lat: %.4f, Lng: %.4f", worker.latitude, worker.longitude)),
-                                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 12.sp,
-                                color = semantic.textPrimary
-                            )
-                        }
+                        Text(
+                            text = "Lat: %.4f, Lng: %.4f".format(worker.latitude, worker.longitude),
+                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 12.sp,
+                            color = semantic.textPrimary
+                        )
                     }
                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         IconButton(

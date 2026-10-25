@@ -580,8 +580,6 @@ fun PosCameraBarcodeScannerDialog(
                                                         text = scannedBarcodeValue ?: product.barcode,
                                                         fontFamily = FontFamily.Monospace,
                                                         fontSize = 11.5.sp,
-                                                        maxLines = 1,
-                                                        softWrap = false,
                                                         color = colorScheme.onSurfaceVariant
                                                     )
                                                 }

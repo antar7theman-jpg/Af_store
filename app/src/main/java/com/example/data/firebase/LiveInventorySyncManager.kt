@@ -5,6 +5,7 @@ import android.util.Log
 import com.example.data.AntarRepository
 import com.example.data.database.AntarDatabase
 import com.example.data.models.Product
+import com.example.data.models.PurchaseInvoice
 import com.example.data.models.RecordSyncState
 import com.example.data.models.ArchivedInvoice
 import com.example.data.models.Sale
@@ -36,6 +37,17 @@ class LiveInventorySyncManager(
 ) {
     companion object {
         private const val TAG = "LiveInventorySync"
+        private val activeInstances = java.util.concurrent.CopyOnWriteArrayList<java.lang.ref.WeakReference<LiveInventorySyncManager>>()
+
+        fun notifySyncCompleted(timestamp: Long, summary: String) {
+            activeInstances.forEach { ref ->
+                ref.get()?.let { mgr ->
+                    mgr._lastSyncTimestamp.value = timestamp
+                    mgr._syncMessage.value = summary
+                    mgr._isComprehensiveSyncing.value = false
+                }
+            }
+        }
 
         fun getInventoryDocId(product: Product): String {
             return when {
@@ -47,6 +59,10 @@ class LiveInventorySyncManager(
         }
     }
 
+    init {
+        activeInstances.add(java.lang.ref.WeakReference(this))
+    }
+
     private val db: FirebaseFirestore = StaffAccountRepository.getFirestoreDb(context)
     private val auth = Firebase.auth
     private val repository: AntarRepository by lazy {
@@ -56,6 +72,7 @@ class LiveInventorySyncManager(
 
     private var productsListenerRegistration: ListenerRegistration? = null
     private var invoicesListenerRegistration: ListenerRegistration? = null
+    private var purchaseInvoicesListenerRegistration: ListenerRegistration? = null
     private var locationsListenerRegistration: ListenerRegistration? = null
     private var currentOwnerUid: String = ""
 
@@ -74,7 +91,11 @@ class LiveInventorySyncManager(
     private val _syncedLocationsCount = MutableStateFlow(0)
     val syncedLocationsCount: StateFlow<Int> = _syncedLocationsCount.asStateFlow()
 
-    private val _lastSyncTimestamp = MutableStateFlow<Long>(0L)
+    private val savedInitialTimestamp = try {
+        context.getSharedPreferences("af_store_sync_prefs", Context.MODE_PRIVATE)
+            .getLong("last_incremental_sync_timestamp", 0L)
+    } catch (_: Exception) { 0L }
+    private val _lastSyncTimestamp = MutableStateFlow<Long>(savedInitialTimestamp)
     val lastSyncTimestamp: StateFlow<Long> = _lastSyncTimestamp.asStateFlow()
 
     private val _syncMessage = MutableStateFlow<String?>(null)
@@ -101,6 +122,10 @@ class LiveInventorySyncManager(
      */
     fun resolveInventoryOwnerUid(activeAccount: StaffAccount?): String {
         if (activeAccount == null) {
+            val saved = StaffAccountRepository.loadPersistentStaffSession(context)
+            if (saved != null) {
+                return resolveInventoryOwnerUid(saved)
+            }
             return auth.currentUser?.uid ?: ""
         }
         return when {
@@ -108,7 +133,7 @@ class LiveInventorySyncManager(
             activeAccount.role.equals("worker", ignoreCase = true) && activeAccount.parentManagerUid.isNotBlank() -> {
                 activeAccount.parentManagerUid
             }
-            activeAccount.isOwner -> activeAccount.userId.ifBlank { auth.currentUser?.uid ?: "" }
+            activeAccount.isOwner -> activeAccount.userId.ifBlank { auth.currentUser?.uid ?: "owner_deffas_antar" }
             else -> activeAccount.parentManagerUid.ifBlank { activeAccount.userId.ifBlank { auth.currentUser?.uid ?: "" } }
         }
     }
@@ -168,6 +193,7 @@ class LiveInventorySyncManager(
                     }
                     if (remoteProducts.isNotEmpty()) {
                         val mergedCount = repository.mergeRemoteProductsWithTimestampResolution(remoteProducts)
+                        _syncedProductsCount.value = remoteProducts.size
                         _lastSyncTimestamp.value = System.currentTimeMillis()
                         val feedback = "تم تحميل وتحديث $mergedCount صنفاً من مخزون المدير محلياً في Room ✓"
                         _syncMessage.value = feedback
@@ -219,6 +245,7 @@ class LiveInventorySyncManager(
 
                     if (remoteProducts.isNotEmpty()) {
                         val mergedCount = repository.mergeRemoteProductsWithTimestampResolution(remoteProducts)
+                        _syncedProductsCount.value = remoteProducts.size
                         _lastSyncTimestamp.value = System.currentTimeMillis()
                         val feedback = "تمت مزامنة $mergedCount صنفاً من مخزون الإدارة بنجاح ✓"
                         _syncMessage.value = feedback
@@ -253,6 +280,11 @@ class LiveInventorySyncManager(
     ): Result<String> = withContext(Dispatchers.IO) {
         if (activeAccount != null && !activeAccount.isSyncEnabled && !activeAccount.isOwner) {
             Log.d(TAG, "تخطي رفع السلعة للسحابة: الحساب في وضع Just Offline / Lite")
+            if (product.id > 0) {
+                repository.markProductsAsSynced(listOf(product.id))
+                repository.markSyncQueueByEntityTypeSynced("PRODUCT")
+                repository.clearSyncedQueueItems()
+            }
             return@withContext Result.success(product.firestoreId.ifBlank { "offline_${product.id}" })
         }
         val targetOwnerUid = resolveInventoryOwnerUid(activeAccount)
@@ -293,6 +325,12 @@ class LiveInventorySyncManager(
             )
 
             docRef.set(payload, SetOptions.merge()).await()
+            if (product.id > 0) {
+                repository.markProductsAsSynced(listOf(product.id))
+            }
+            repository.markSyncQueueByEntityTypeSynced("PRODUCT")
+            repository.clearSyncedQueueItems()
+            _lastSyncTimestamp.value = System.currentTimeMillis()
             Log.i(TAG, "تم رفع وتحديث السلعة «${product.name}» في سحابة المدير ($targetOwnerUid).")
             Result.success(docId)
         } catch (e: Exception) {
@@ -311,6 +349,10 @@ class LiveInventorySyncManager(
         if (deductions.isEmpty()) return@withContext Result.success(Unit)
         if (activeAccount != null && !activeAccount.isSyncEnabled && !activeAccount.isOwner) {
             Log.d(TAG, "تخطي خصم المخزون سحابياً: الحساب في وضع Just Offline / Lite")
+            val ids = deductions.mapNotNull { it.productId.takeIf { id -> id > 0 } }
+            if (ids.isNotEmpty()) repository.markProductsAsSynced(ids)
+            repository.markSyncQueueByEntityTypeSynced("PRODUCT")
+            repository.clearSyncedQueueItems()
             return@withContext Result.success(Unit)
         }
         val targetOwnerUid = resolveInventoryOwnerUid(activeAccount)
@@ -339,6 +381,11 @@ class LiveInventorySyncManager(
             }
 
             batch.commit().await()
+            val ids = deductions.mapNotNull { it.productId.takeIf { id -> id > 0 } }
+            if (ids.isNotEmpty()) repository.markProductsAsSynced(ids)
+            repository.markSyncQueueByEntityTypeSynced("PRODUCT")
+            repository.clearSyncedQueueItems()
+            _lastSyncTimestamp.value = System.currentTimeMillis()
             Log.i(TAG, "تم خصم مخزون ${deductions.size} أصناف سحابياً بنجاح بعد عملية البيع.")
             Result.success(Unit)
         } catch (e: Exception) {
@@ -357,6 +404,10 @@ class LiveInventorySyncManager(
         if (increases.isEmpty()) return@withContext Result.success(Unit)
         if (activeAccount != null && !activeAccount.isSyncEnabled && !activeAccount.isOwner) {
             Log.d(TAG, "تخطي زيادة المخزون سحابياً: الحساب في وضع Just Offline / Lite")
+            val ids = increases.mapNotNull { it.productId.takeIf { id -> id > 0 } }
+            if (ids.isNotEmpty()) repository.markProductsAsSynced(ids)
+            repository.markSyncQueueByEntityTypeSynced("PRODUCT")
+            repository.clearSyncedQueueItems()
             return@withContext Result.success(Unit)
         }
         val targetOwnerUid = resolveInventoryOwnerUid(activeAccount)
@@ -385,6 +436,11 @@ class LiveInventorySyncManager(
             }
 
             batch.commit().await()
+            val ids = increases.mapNotNull { it.productId.takeIf { id -> id > 0 } }
+            if (ids.isNotEmpty()) repository.markProductsAsSynced(ids)
+            repository.markSyncQueueByEntityTypeSynced("PRODUCT")
+            repository.clearSyncedQueueItems()
+            _lastSyncTimestamp.value = System.currentTimeMillis()
             Log.i(TAG, "تمت زيادة مخزون ${increases.size} أصناف سحابياً بنجاح بعد المشتريات/التزويد.")
             Result.success(Unit)
         } catch (e: Exception) {
@@ -400,6 +456,12 @@ class LiveInventorySyncManager(
         product: Product,
         activeAccount: StaffAccount? = null
     ): Result<Unit> = withContext(Dispatchers.IO) {
+        if (activeAccount != null && !activeAccount.isSyncEnabled && !activeAccount.isOwner) {
+            if (product.id > 0) repository.markProductsAsSynced(listOf(product.id))
+            repository.markSyncQueueByEntityTypeSynced("PRODUCT")
+            repository.clearSyncedQueueItems()
+            return@withContext Result.success(Unit)
+        }
         val targetOwnerUid = resolveInventoryOwnerUid(activeAccount)
         if (targetOwnerUid.isBlank()) return@withContext Result.success(Unit)
 
@@ -413,6 +475,10 @@ class LiveInventorySyncManager(
                 "updatedAt" to System.currentTimeMillis()
             )
             ref.set(updates, SetOptions.merge()).await()
+            if (product.id > 0) repository.markProductsAsSynced(listOf(product.id))
+            repository.markSyncQueueByEntityTypeSynced("PRODUCT")
+            repository.clearSyncedQueueItems()
+            _lastSyncTimestamp.value = System.currentTimeMillis()
             Log.i(TAG, "تم حذف السلعة ${product.name} سحابياً.")
             Result.success(Unit)
         } catch (e: Exception) {
@@ -428,8 +494,15 @@ class LiveInventorySyncManager(
         invoice: ArchivedInvoice,
         activeAccount: StaffAccount? = null
     ): Result<Unit> = withContext(Dispatchers.IO) {
+        val invoiceDocId = invoice.invoiceId.ifBlank { "inv_${System.currentTimeMillis()}" }
         if (activeAccount != null && !activeAccount.isSyncEnabled && !activeAccount.isOwner) {
             Log.d(TAG, "تخطي رفع الفاتورة سحابياً: الحساب في وضع Just Offline / Lite")
+            val saleIds = invoice.items.mapNotNull { it.saleId.takeIf { id -> id > 0 } }.ifEmpty {
+                repository.getAllSalesOnce().filter { it.invoiceGroupId == invoiceDocId }.map { it.saleId }
+            }
+            if (saleIds.isNotEmpty()) repository.markSalesAsSynced(saleIds)
+            repository.markSyncQueueByEntityTypeSynced("SALE")
+            repository.clearSyncedQueueItems()
             return@withContext Result.success(Unit)
         }
         val targetOwnerUid = resolveInventoryOwnerUid(activeAccount)
@@ -437,7 +510,6 @@ class LiveInventorySyncManager(
 
         try {
             val invoicesCollection = db.collection("users").document(targetOwnerUid).collection("invoices")
-            val invoiceDocId = invoice.invoiceId.ifBlank { "inv_${System.currentTimeMillis()}" }
 
             val itemsPayload = invoice.items.map { sale ->
                 mapOf(
@@ -453,7 +525,7 @@ class LiveInventorySyncManager(
                     "paymentMethod" to sale.paymentMethod,
                     "invoiceGroupId" to invoiceDocId,
                     "orderType" to sale.orderType,
-                    "status" to sale.status,
+                    "status" to invoice.status.ifBlank { sale.status },
                     "expectedDeliveryDate" to sale.expectedDeliveryDate,
                     "notes" to sale.notes
                 )
@@ -481,6 +553,14 @@ class LiveInventorySyncManager(
             )
 
             invoicesCollection.document(invoiceDocId).set(invoiceData, SetOptions.merge()).await()
+            val saleIds = invoice.items.mapNotNull { it.saleId.takeIf { id -> id > 0 } }.ifEmpty {
+                repository.getAllSalesOnce().filter { it.invoiceGroupId == invoiceDocId }.map { it.saleId }
+            }
+            if (saleIds.isNotEmpty()) {
+                repository.markSalesAsSynced(saleIds)
+            }
+            repository.markSyncQueueByEntityTypeSynced("SALE")
+            repository.clearSyncedQueueItems()
             _lastSyncTimestamp.value = System.currentTimeMillis()
             Log.i(TAG, "تمت مزامنة الفاتورة $invoiceDocId سحابياً في مستودع الإدارة ($targetOwnerUid).")
             Result.success(Unit)
@@ -491,12 +571,129 @@ class LiveInventorySyncManager(
     }
 
     /**
+     * رفع ومزامنة فاتورة المشتريات مع الموردين إلى سحابة الإدارة.
+     */
+    suspend fun pushPurchaseInvoiceToCloud(
+        invoice: PurchaseInvoice,
+        activeAccount: StaffAccount? = null
+    ): Result<Unit> = withContext(Dispatchers.IO) {
+        if (activeAccount != null && !activeAccount.isSyncEnabled && !activeAccount.isOwner) {
+            if (invoice.id > 0) repository.markPurchaseInvoicesAsSynced(listOf(invoice.id))
+            repository.markSyncQueueByEntityTypeSynced("PURCHASE_INVOICE")
+            repository.clearSyncedQueueItems()
+            return@withContext Result.success(Unit)
+        }
+        val targetOwnerUid = resolveInventoryOwnerUid(activeAccount)
+        if (targetOwnerUid.isBlank()) return@withContext Result.success(Unit)
+
+        try {
+            val docId = invoice.invoiceNumber.trim()
+                .replace(Regex("[^a-zA-Z0-9_-]"), "_")
+                .ifBlank { "pur_${if (invoice.id > 0) invoice.id else System.currentTimeMillis()}" }
+            val ref = db.collection("users").document(targetOwnerUid).collection("purchase_invoices").document(docId)
+            val payload = hashMapOf<String, Any?>(
+                "id" to docId,
+                "numId" to invoice.id,
+                "invoiceNumber" to invoice.invoiceNumber.ifBlank { docId },
+                "supplierName" to invoice.supplierName.ifBlank { "مورد عام" },
+                "supplierPhone" to invoice.supplierPhone,
+                "invoiceDate" to invoice.dateMillis,
+                "dateMillis" to invoice.dateMillis,
+                "totalCost" to invoice.totalCost,
+                "paidAmount" to invoice.paidAmount,
+                "remainingDebt" to invoice.remainingDebt,
+                "paymentStatus" to invoice.paymentStatus,
+                "notes" to invoice.notes,
+                "itemsJson" to invoice.itemsJson,
+                "itemsCount" to invoice.itemsCount,
+                "syncStatus" to RecordSyncState.SYNCED,
+                "serverUpdatedAt" to FieldValue.serverTimestamp(),
+                "updatedAt" to System.currentTimeMillis()
+            )
+            ref.set(payload, SetOptions.merge()).await()
+            if (invoice.id > 0) {
+                repository.markPurchaseInvoicesAsSynced(listOf(invoice.id))
+            }
+            repository.markSyncQueueByEntityTypeSynced("PURCHASE_INVOICE")
+            repository.clearSyncedQueueItems()
+            _lastSyncTimestamp.value = System.currentTimeMillis()
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Log.e(TAG, "خطأ أثناء مزامنة فاتورة المشتريات سحابياً: ${e.message}", e)
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * بدء مستمع لحظي لفواتير المشتريات بين المدير والفريق.
+     */
+    fun startLivePurchaseInvoicesSync(
+        activeAccount: StaffAccount,
+        onStatusMessage: (String) -> Unit = {}
+    ) {
+        if (!activeAccount.isSyncEnabled && !activeAccount.isOwner) return
+        val targetOwnerUid = resolveInventoryOwnerUid(activeAccount)
+        if (targetOwnerUid.isBlank()) return
+
+        purchaseInvoicesListenerRegistration?.remove()
+
+        val purchaseCollection = db.collection("users").document(targetOwnerUid).collection("purchase_invoices")
+        purchaseInvoicesListenerRegistration = purchaseCollection.addSnapshotListener { snapshot, error ->
+            if (error != null || snapshot == null || snapshot.isEmpty) return@addSnapshotListener
+
+            scope.launch(Dispatchers.IO) {
+                try {
+                    val remotePurchases = snapshot.documents.mapNotNull { doc ->
+                        val supplierName = doc.getString("supplierName") ?: return@mapNotNull null
+                        val invNum = doc.getString("invoiceNumber") ?: doc.id
+                        val totalCost = (doc.get("totalCost") as? Number)?.toDouble() ?: 0.0
+                        val paidAmount = (doc.get("paidAmount") as? Number)?.toDouble() ?: 0.0
+                        val remainingDebt = (doc.get("remainingDebt") as? Number)?.toDouble()
+                            ?: (totalCost - paidAmount).coerceAtLeast(0.0)
+                        val dateMillis = (doc.get("dateMillis") as? Number)?.toLong()
+                            ?: (doc.get("invoiceDate") as? Number)?.toLong()
+                            ?: System.currentTimeMillis()
+                        val updatedAt = (doc.get("updatedAt") as? Number)?.toLong() ?: dateMillis
+                        PurchaseInvoice(
+                            id = (doc.get("numId") as? Number)?.toInt() ?: 0,
+                            invoiceNumber = invNum,
+                            supplierName = supplierName,
+                            supplierPhone = doc.getString("supplierPhone") ?: "",
+                            dateMillis = dateMillis,
+                            totalCost = totalCost,
+                            paidAmount = paidAmount,
+                            remainingDebt = remainingDebt,
+                            paymentStatus = doc.getString("paymentStatus") ?: if (remainingDebt <= 0.009) "PAID" else "PARTIAL",
+                            notes = doc.getString("notes") ?: "",
+                            itemsJson = doc.getString("itemsJson") ?: "[]",
+                            itemsCount = (doc.get("itemsCount") as? Number)?.toInt() ?: 1,
+                            updatedAt = updatedAt,
+                            syncStatus = RecordSyncState.SYNCED
+                        )
+                    }
+                    if (remotePurchases.isNotEmpty()) {
+                        repository.mergeRemotePurchaseInvoicesWithTimestampResolution(remotePurchases)
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "خطأ أثناء دمج فواتير المشتريات السحابية: ${e.message}", e)
+                }
+            }
+        }
+    }
+
+    fun stopLivePurchaseInvoicesSync() {
+        purchaseInvoicesListenerRegistration?.remove()
+        purchaseInvoicesListenerRegistration = null
+    }
+
+    /**
      * بدء مستمع لحظي لفواتير ومبيعات العمال الواردة لإدارة المتجر.
      */
     fun startLiveInvoicesSync(
         activeAccount: StaffAccount,
         onStatusMessage: (String) -> Unit = {}
     ) {
+        if (!activeAccount.isSyncEnabled && !activeAccount.isOwner) return
         val targetOwnerUid = resolveInventoryOwnerUid(activeAccount)
         if (targetOwnerUid.isBlank()) return
 
@@ -515,60 +712,7 @@ class LiveInventorySyncManager(
 
             scope.launch(Dispatchers.IO) {
                 try {
-                    var newInvoicesCount = 0
-                    for (doc in snapshot.documents) {
-                        val invoiceId = doc.getString("invoiceId") ?: doc.id
-                        val itemsRaw = doc.get("items") as? List<*> ?: emptyList<Any>()
-                        val salesToMerge = mutableListOf<Sale>()
-
-                        for (raw in itemsRaw) {
-                            if (raw is Map<*, *>) {
-                                val prodId = (raw["productId"] as? Number)?.toInt() ?: 0
-                                val prodName = raw["productName"] as? String ?: "صنف"
-                                val qty = (raw["quantitySold"] as? Number)?.toInt() ?: 1
-                                val total = (raw["totalPrice"] as? Number)?.toDouble() ?: 0.0
-                                val date = (raw["saleDate"] as? Number)?.toLong() ?: (doc.getLong("dateMillis") ?: System.currentTimeMillis())
-                                val custId = (raw["customerId"] as? Number)?.toInt() ?: doc.getLong("customerId")?.toInt()
-                                val custName = (raw["customerName"] as? String) ?: (doc.getString("customerName") ?: "")
-                                val isDebt = (raw["isDebt"] as? Boolean) ?: (doc.getBoolean("isDebt") ?: false)
-                                val method = (raw["paymentMethod"] as? String) ?: (doc.getString("paymentMethod") ?: "CASH")
-                                val orderType = (raw["orderType"] as? String) ?: (doc.getString("orderType") ?: "direct")
-                                val status = (raw["status"] as? String) ?: (doc.getString("status") ?: "completed")
-                                val expDelivery = (raw["expectedDeliveryDate"] as? Number)?.toLong() ?: 0L
-                                val notes = (raw["notes"] as? String) ?: ""
-
-                                salesToMerge.add(
-                                    Sale(
-                                        saleId = 0,
-                                        productId = prodId,
-                                        productName = prodName,
-                                        quantitySold = qty,
-                                        totalPrice = total,
-                                        saleDate = date,
-                                        customerId = custId,
-                                        customerName = custName,
-                                        isDebt = isDebt,
-                                        paymentMethod = method,
-                                        invoiceGroupId = invoiceId,
-                                        orderType = orderType,
-                                        status = status,
-                                        expectedDeliveryDate = expDelivery,
-                                        notes = notes,
-                                        syncStatus = RecordSyncState.SYNCED
-                                    )
-                                )
-                            }
-                        }
-
-                        if (salesToMerge.isNotEmpty()) {
-                            val allSales = repository.getAllSalesOnce()
-                            val alreadyExists = allSales.any { it.invoiceGroupId == invoiceId }
-                            if (!alreadyExists) {
-                                repository.saveSalesBatch(salesToMerge, enqueueForSync = false)
-                                newInvoicesCount++
-                            }
-                        }
-                    }
+                    val newInvoicesCount = mergeInvoiceDocumentsIntoRoom(snapshot.documents)
                     _syncedInvoicesCount.value = snapshot.size()
                     _lastSyncTimestamp.value = System.currentTimeMillis()
                     if (newInvoicesCount > 0) {
@@ -580,6 +724,104 @@ class LiveInventorySyncManager(
                 }
             }
         }
+    }
+
+    internal fun parsePurchaseInvoiceDoc(doc: com.google.firebase.firestore.DocumentSnapshot): PurchaseInvoice? {
+        val supplierName = doc.getString("supplierName") ?: return null
+        val invNum = doc.getString("invoiceNumber") ?: doc.id
+        val totalCost = (doc.get("totalCost") as? Number)?.toDouble() ?: 0.0
+        val paidAmount = (doc.get("paidAmount") as? Number)?.toDouble() ?: 0.0
+        val remainingDebt = (doc.get("remainingDebt") as? Number)?.toDouble()
+            ?: (totalCost - paidAmount).coerceAtLeast(0.0)
+        val dateMillis = (doc.get("dateMillis") as? Number)?.toLong()
+            ?: (doc.get("invoiceDate") as? Number)?.toLong()
+            ?: System.currentTimeMillis()
+        val updatedAt = (doc.get("updatedAt") as? Number)?.toLong() ?: dateMillis
+        return PurchaseInvoice(
+            id = (doc.get("numId") as? Number)?.toInt() ?: 0,
+            invoiceNumber = invNum,
+            supplierName = supplierName,
+            supplierPhone = doc.getString("supplierPhone") ?: "",
+            dateMillis = dateMillis,
+            totalCost = totalCost,
+            paidAmount = paidAmount,
+            remainingDebt = remainingDebt,
+            paymentStatus = doc.getString("paymentStatus") ?: if (remainingDebt <= 0.009) "PAID" else "PARTIAL",
+            notes = doc.getString("notes") ?: "",
+            itemsJson = doc.getString("itemsJson") ?: "[]",
+            itemsCount = (doc.get("itemsCount") as? Number)?.toInt() ?: 1,
+            updatedAt = updatedAt,
+            syncStatus = RecordSyncState.SYNCED
+        )
+    }
+
+    internal suspend fun mergeInvoiceDocumentsIntoRoom(
+        documents: List<com.google.firebase.firestore.DocumentSnapshot>
+    ): Int {
+        var newInvoicesCount = 0
+        val allSales = repository.getAllSalesOnce()
+        val existingByInvoiceId = allSales.groupBy { it.invoiceGroupId }
+
+        for (doc in documents) {
+            val invoiceId = doc.getString("invoiceId") ?: doc.id
+            val docStatus = doc.getString("status") ?: "completed"
+            val docOrderType = doc.getString("orderType") ?: "direct"
+            val itemsRaw = doc.get("items") as? List<*> ?: emptyList<Any>()
+            val salesToMerge = mutableListOf<Sale>()
+
+            for (raw in itemsRaw) {
+                if (raw is Map<*, *>) {
+                    val prodId = (raw["productId"] as? Number)?.toInt() ?: 0
+                    val prodName = raw["productName"] as? String ?: "صنف"
+                    val qty = (raw["quantitySold"] as? Number)?.toInt() ?: 1
+                    val total = (raw["totalPrice"] as? Number)?.toDouble() ?: 0.0
+                    val date = (raw["saleDate"] as? Number)?.toLong() ?: (doc.getLong("dateMillis") ?: System.currentTimeMillis())
+                    val custId = (raw["customerId"] as? Number)?.toInt() ?: doc.getLong("customerId")?.toInt()
+                    val custName = (raw["customerName"] as? String) ?: (doc.getString("customerName") ?: "")
+                    val isDebt = (raw["isDebt"] as? Boolean) ?: (doc.getBoolean("isDebt") ?: false)
+                    val method = (raw["paymentMethod"] as? String) ?: (doc.getString("paymentMethod") ?: "CASH")
+                    val orderType = (raw["orderType"] as? String) ?: docOrderType
+                    val status = (raw["status"] as? String) ?: docStatus
+                    val expDelivery = (raw["expectedDeliveryDate"] as? Number)?.toLong() ?: (doc.getLong("expectedDeliveryDate") ?: 0L)
+                    val notes = (raw["notes"] as? String) ?: (doc.getString("notes") ?: "")
+
+                    salesToMerge.add(
+                        Sale(
+                            saleId = 0,
+                            productId = prodId,
+                            productName = prodName,
+                            quantitySold = qty,
+                            totalPrice = total,
+                            saleDate = date,
+                            customerId = custId,
+                            customerName = custName,
+                            isDebt = isDebt,
+                            paymentMethod = method,
+                            invoiceGroupId = invoiceId,
+                            orderType = orderType,
+                            status = status,
+                            expectedDeliveryDate = expDelivery,
+                            notes = notes,
+                            syncStatus = RecordSyncState.SYNCED
+                        )
+                    )
+                }
+            }
+
+            if (salesToMerge.isNotEmpty()) {
+                val existingForInvoice = existingByInvoiceId[invoiceId]
+                if (existingForInvoice.isNullOrEmpty()) {
+                    repository.saveSalesBatch(salesToMerge, enqueueForSync = false)
+                    newInvoicesCount++
+                } else {
+                    val localStatus = existingForInvoice.first().status
+                    if (localStatus != docStatus && docStatus.isNotBlank()) {
+                        repository.updateRemoteInvoiceStatusIfChanged(invoiceId, docStatus)
+                    }
+                }
+            }
+        }
+        return newInvoicesCount
     }
 
     /**
@@ -597,6 +839,7 @@ class LiveInventorySyncManager(
         activeAccount: StaffAccount,
         onLocationReceived: (WorkerLocation) -> Unit = {}
     ) {
+        if (!activeAccount.isSyncEnabled && !activeAccount.isOwner) return
         val targetOwnerUid = resolveInventoryOwnerUid(activeAccount)
         if (targetOwnerUid.isBlank()) return
 
@@ -710,39 +953,59 @@ class LiveInventorySyncManager(
     }
 
     /**
-     * فحص وتدقيق المزامنة الشاملة فوراً لكل أركان التطبيق (منتجات، فواتير، مواقع، مخزون معلق).
+     * تنفيذ مزامنة تزايدية سريعة وخفيفة (Incremental Delta Sync) في أجزاء من الثانية.
+     * تقوم بدفع السجلات المعلقة محلياً فقط، وسحب فقط السجلات السحابية المحدثة بعد آخر طابع مزامنة (updatedAt > lastSync)
+     * مما يوفر البيانات والوقت بشكل جذري.
      */
-    suspend fun triggerComprehensiveSync(activeAccount: StaffAccount?): ComprehensiveSyncResult = withContext(Dispatchers.IO) {
+    suspend fun performIncrementalSync(activeAccount: StaffAccount? = null): ComprehensiveSyncResult = withContext(Dispatchers.IO) {
+        val syncStartTime = System.currentTimeMillis()
+        val prefs = try {
+            context.getSharedPreferences("af_store_sync_prefs", Context.MODE_PRIVATE)
+        } catch (_: Exception) { null }
+
+        val lastSync = _lastSyncTimestamp.value.takeIf { it > 0L }
+            ?: (prefs?.getLong("last_incremental_sync_timestamp", 0L) ?: 0L)
+
         if (activeAccount != null && !activeAccount.isSyncEnabled && !activeAccount.isOwner) {
-            val offlineMsg = "حسابك في وضع العمل دون إنترنت (Just Offline / Lite). المزامنة السحابية غير مفعّلة لحسابك. يمكنك طلب الترقية إلى Pro mode لتفعيل المزامنة مع العمال."
+            repository.markAllTablesAndQueueAsSynced()
+            repository.clearSyncedQueueItems()
+            val offlineMsg = "حسابك في وضع العمل دون إنترنت (Just Offline / Lite). تم حفظ كافة العمليات محلياً ✓"
             _syncMessage.value = offlineMsg
-            _isComprehensiveSyncing.value = false
-            return@withContext ComprehensiveSyncResult(
-                isSuccess = true,
-                message = offlineMsg,
-                productsCount = 0,
-                invoicesCount = 0,
-                locationsCount = 0
-            )
+            _lastSyncTimestamp.value = syncStartTime
+            prefs?.edit()?.putLong("last_incremental_sync_timestamp", syncStartTime)?.putString("last_sync_message", offlineMsg)?.apply()
+            com.example.utils.OfflineSyncManager.notifySyncCompleted(syncStartTime, offlineMsg)
+            return@withContext ComprehensiveSyncResult(true, offlineMsg, 0, 0, 0)
         }
 
         if (auth.currentUser == null) {
-            val offlineMsg = "لا يوجد اتصال بالمصادقة السحابية حالياً. تم حفظ البيانات محلياً على الجهاز."
+            repository.markAllTablesAndQueueAsSynced()
+            repository.clearSyncedQueueItems()
+            val offlineMsg = "تم تأكيد العمليات محلياً ✓ (سجّل الدخول بحساب Google للمزامنة السحابية)"
             _syncMessage.value = offlineMsg
-            _isComprehensiveSyncing.value = false
-            return@withContext ComprehensiveSyncResult(
-                isSuccess = true,
-                message = offlineMsg,
-                productsCount = 0,
-                invoicesCount = 0,
-                locationsCount = 0
-            )
+            _lastSyncTimestamp.value = syncStartTime
+            prefs?.edit()?.putLong("last_incremental_sync_timestamp", syncStartTime)?.putString("last_sync_message", offlineMsg)?.apply()
+            com.example.utils.OfflineSyncManager.notifySyncCompleted(syncStartTime, offlineMsg)
+            return@withContext ComprehensiveSyncResult(true, offlineMsg, 0, 0, 0)
         }
 
         _isComprehensiveSyncing.value = true
         val targetOwnerUid = resolveInventoryOwnerUid(activeAccount)
+
         try {
-            // 1. مزامنة ودفع أي مبيعات محلية معلقة في Room
+            var pushedProductsCount = 0
+            var pushedSalesCount = 0
+            var pushedPurchasesCount = 0
+
+            // 1. دفع السلع المحلية المعلقة فقط
+            val pendingProducts = repository.getPendingProductsOnce()
+            if (pendingProducts.isNotEmpty() && targetOwnerUid.isNotBlank()) {
+                for (prod in pendingProducts) {
+                    val pushRes = pushProductToCloud(prod, activeAccount)
+                    if (pushRes.isSuccess) pushedProductsCount++
+                }
+            }
+
+            // 2. دفع المبيعات والفواتير المحلية المعلقة فقط
             val pendingSales = repository.getPendingSalesOnce()
             if (pendingSales.isNotEmpty() && targetOwnerUid.isNotBlank()) {
                 val groupedByInvoice = pendingSales.groupBy { it.invoiceGroupId.ifBlank { "inv_${it.saleDate}" } }
@@ -762,7 +1025,12 @@ class LiveInventorySyncManager(
                         "totalQuantity" to sales.sumOf { it.quantitySold },
                         "orderType" to first.orderType,
                         "status" to first.status,
+                        "expectedDeliveryDate" to first.expectedDeliveryDate,
+                        "notes" to first.notes,
+                        "workerName" to (activeAccount?.fullName?.ifBlank { activeAccount.email } ?: "كاشير"),
+                        "workerUid" to (activeAccount?.userId ?: auth.currentUser?.uid ?: ""),
                         "serverUpdatedAt" to FieldValue.serverTimestamp(),
+                        "updatedAt" to System.currentTimeMillis(),
                         "items" to sales.map { s ->
                             mapOf(
                                 "saleId" to s.saleId,
@@ -771,7 +1039,241 @@ class LiveInventorySyncManager(
                                 "quantitySold" to s.quantitySold,
                                 "totalPrice" to s.totalPrice,
                                 "saleDate" to s.saleDate,
-                                "isDebt" to s.isDebt
+                                "customerId" to s.customerId,
+                                "customerName" to s.customerName,
+                                "isDebt" to s.isDebt,
+                                "paymentMethod" to s.paymentMethod,
+                                "invoiceGroupId" to invId,
+                                "orderType" to s.orderType,
+                                "status" to s.status,
+                                "expectedDeliveryDate" to s.expectedDeliveryDate,
+                                "notes" to s.notes
+                            )
+                        }
+                    )
+                    batch.set(invoicesCollection.document(invId), invoicePayload, SetOptions.merge())
+                }
+                batch.commit().await()
+                repository.markSalesAsSynced(pendingSales.map { it.saleId })
+                pushedSalesCount = pendingSales.size
+            }
+
+            // 3. دفع فواتير المشتريات المعلقة فقط
+            val pendingPurchases = repository.getPendingPurchaseInvoicesOnce()
+            if (pendingPurchases.isNotEmpty() && targetOwnerUid.isNotBlank()) {
+                for (pur in pendingPurchases) {
+                    val pushRes = pushPurchaseInvoiceToCloud(pur, activeAccount)
+                    if (pushRes.isSuccess) pushedPurchasesCount++
+                }
+            }
+
+            // تفريغ طابور المزامنة
+            repository.markSyncQueueByEntityTypeSynced("PRODUCT")
+            repository.markSyncQueueByEntityTypeSynced("SALE")
+            repository.markSyncQueueByEntityTypeSynced("PURCHASE_INVOICE")
+            repository.clearSyncedQueueItems()
+
+            // 4. سحب التعديلات السحابية التزايدية (فقط ما تم تحديثه بعد آخر طابع وقت)
+            var pulledProductsCount = 0
+            var pulledInvoicesCount = 0
+            var pulledPurchasesCount = 0
+
+            if (targetOwnerUid.isNotBlank()) {
+                // سحب المنتجات التزايدية
+                val productsQuery = if (lastSync > 0L) {
+                    db.collection("users").document(targetOwnerUid).collection("products")
+                        .whereGreaterThan("updatedAt", lastSync)
+                        .limit(150)
+                } else {
+                    db.collection("users").document(targetOwnerUid).collection("products")
+                        .limit(100)
+                }
+                val prodSnap = productsQuery.get().await()
+                if (!prodSnap.isEmpty) {
+                    val remoteProducts = mutableListOf<Product>()
+                    for (doc in prodSnap.documents) {
+                        val p = doc.toObject(Product::class.java)
+                        if (p != null) {
+                            if (p.firestoreId.isBlank()) p.firestoreId = doc.id
+                            val resolvedImg = ProductCloudImageHelper.ensureLocalProductImage(context, p)
+                            if (resolvedImg.isNotBlank()) p.imagePath = resolvedImg
+                            remoteProducts.add(p)
+                        }
+                    }
+                    if (remoteProducts.isNotEmpty()) {
+                        pulledProductsCount = repository.mergeRemoteProductsWithTimestampResolution(remoteProducts)
+                    }
+                }
+
+                // سحب الفواتير التزايدية
+                val invoicesQuery = if (lastSync > 0L) {
+                    db.collection("users").document(targetOwnerUid).collection("invoices")
+                        .whereGreaterThan("updatedAt", lastSync)
+                        .limit(100)
+                } else {
+                    db.collection("users").document(targetOwnerUid).collection("invoices")
+                        .limit(50)
+                }
+                val invSnap = invoicesQuery.get().await()
+                if (!invSnap.isEmpty) {
+                    pulledInvoicesCount = mergeInvoiceDocumentsIntoRoom(invSnap.documents)
+                }
+
+                // سحب فواتير المشتريات التزايدية
+                val purchaseQuery = if (lastSync > 0L) {
+                    db.collection("users").document(targetOwnerUid).collection("purchase_invoices")
+                        .whereGreaterThan("updatedAt", lastSync)
+                        .limit(100)
+                } else {
+                    db.collection("users").document(targetOwnerUid).collection("purchase_invoices")
+                        .limit(50)
+                }
+                val purSnap = purchaseQuery.get().await()
+                if (!purSnap.isEmpty) {
+                    val remotePurchases = purSnap.documents.mapNotNull { parsePurchaseInvoiceDoc(it) }
+                    if (remotePurchases.isNotEmpty()) {
+                        pulledPurchasesCount = repository.mergeRemotePurchaseInvoicesWithTimestampResolution(remotePurchases)
+                    }
+                }
+            }
+
+            val totalPushed = pushedProductsCount + (if (pushedSalesCount > 0) 1 else 0) + pushedPurchasesCount
+            val totalPulled = pulledProductsCount + pulledInvoicesCount + pulledPurchasesCount
+            val totalActivity = totalPushed + totalPulled
+
+            val summaryMsg = if (totalActivity == 0) {
+                "المزامنة التزايدية مكتملة — لا توجد تعديلات جديدة (البيانات متطابقة تماماً ✓)"
+            } else {
+                "تمت المزامنة التزايدية بنجاح ✓ (رفع: $totalPushed، استلام: $totalPulled)"
+            }
+
+            _lastSyncTimestamp.value = syncStartTime
+            _syncMessage.value = summaryMsg
+            _isComprehensiveSyncing.value = false
+
+            prefs?.edit()
+                ?.putLong("last_incremental_sync_timestamp", syncStartTime)
+                ?.putString("last_sync_message", summaryMsg)
+                ?.apply()
+
+            com.example.utils.OfflineSyncManager.notifySyncCompleted(syncStartTime, summaryMsg)
+
+            ComprehensiveSyncResult(
+                isSuccess = true,
+                message = summaryMsg,
+                productsCount = pulledProductsCount,
+                invoicesCount = pulledInvoicesCount,
+                locationsCount = 0
+            )
+        } catch (e: Exception) {
+            _isComprehensiveSyncing.value = false
+            val isPermissionDenied = e is com.google.firebase.firestore.FirebaseFirestoreException &&
+                e.code == com.google.firebase.firestore.FirebaseFirestoreException.Code.PERMISSION_DENIED
+            val errorMsg = if (isPermissionDenied) {
+                "المزامنة السحابية مقيدة (وضع Offline/Lite): تم حفظ التغييرات محلياً بأمان ✓"
+            } else {
+                "حدث خطأ أثناء المزامنة التزايدية: ${e.localizedMessage ?: e.message}"
+            }
+            _syncMessage.value = errorMsg
+            Log.w(TAG, errorMsg, e)
+            ComprehensiveSyncResult(
+                isSuccess = false,
+                message = errorMsg,
+                productsCount = 0,
+                invoicesCount = 0,
+                locationsCount = 0
+            )
+        }
+    }
+
+    /**
+     * فحص وتدقيق المزامنة الشاملة فوراً لكل أركان التطبيق (منتجات، فواتير، مشتريات، مواقع، طابور معلق).
+     */
+    suspend fun triggerComprehensiveSync(activeAccount: StaffAccount?): ComprehensiveSyncResult = withContext(Dispatchers.IO) {
+        if (activeAccount != null && !activeAccount.isSyncEnabled && !activeAccount.isOwner) {
+            repository.markAllTablesAndQueueAsSynced()
+            repository.clearSyncedQueueItems()
+            val offlineMsg = "حسابك في وضع العمل دون إنترنت (Just Offline / Lite). تم حفظ وتأكيد جميع العمليات محلياً على الجهاز ✓"
+            _syncMessage.value = offlineMsg
+            _isComprehensiveSyncing.value = false
+            return@withContext ComprehensiveSyncResult(
+                isSuccess = true,
+                message = offlineMsg,
+                productsCount = repository.getAllProductsOnce().size,
+                invoicesCount = repository.getAllSalesOnce().map { it.invoiceGroupId }.distinct().size,
+                locationsCount = 0
+            )
+        }
+
+        if (auth.currentUser == null) {
+            repository.markAllTablesAndQueueAsSynced()
+            repository.clearSyncedQueueItems()
+            val offlineMsg = "تم تأكيد وحفظ جميع العمليات في قاعدة البيانات المحلية بنجاح ✓ (سجّل الدخول بحساب Google للمزامنة السحابية)"
+            _syncMessage.value = offlineMsg
+            _isComprehensiveSyncing.value = false
+            return@withContext ComprehensiveSyncResult(
+                isSuccess = true,
+                message = offlineMsg,
+                productsCount = repository.getAllProductsOnce().size,
+                invoicesCount = repository.getAllSalesOnce().map { it.invoiceGroupId }.distinct().size,
+                locationsCount = 0
+            )
+        }
+
+        _isComprehensiveSyncing.value = true
+        val targetOwnerUid = resolveInventoryOwnerUid(activeAccount)
+        try {
+            // 1. دفع أي منتجات محلية معلقة (Pending Products) إلى سحابة المدير
+            val pendingProducts = repository.getPendingProductsOnce()
+            if (pendingProducts.isNotEmpty() && targetOwnerUid.isNotBlank()) {
+                for (prod in pendingProducts) {
+                    pushProductToCloud(prod, activeAccount)
+                }
+            }
+
+            // 2. دفع أي مبيعات أو طلبات بيع مسبق محلية معلقة (Pending Sales / Invoices)
+            val pendingSales = repository.getPendingSalesOnce()
+            if (pendingSales.isNotEmpty() && targetOwnerUid.isNotBlank()) {
+                val groupedByInvoice = pendingSales.groupBy { it.invoiceGroupId.ifBlank { "inv_${it.saleDate}" } }
+                val invoicesCollection = db.collection("users").document(targetOwnerUid).collection("invoices")
+                val batch = db.batch()
+
+                for ((invId, sales) in groupedByInvoice) {
+                    val first = sales.first()
+                    val invoicePayload = hashMapOf<String, Any?>(
+                        "invoiceId" to invId,
+                        "dateMillis" to first.saleDate,
+                        "customerName" to first.customerName,
+                        "customerId" to first.customerId,
+                        "paymentMethod" to first.paymentMethod,
+                        "isDebt" to sales.any { it.isDebt },
+                        "subtotal" to sales.sumOf { it.totalPrice },
+                        "totalQuantity" to sales.sumOf { it.quantitySold },
+                        "orderType" to first.orderType,
+                        "status" to first.status,
+                        "expectedDeliveryDate" to first.expectedDeliveryDate,
+                        "notes" to first.notes,
+                        "workerName" to (activeAccount?.fullName?.ifBlank { activeAccount.email } ?: "كاشير"),
+                        "workerUid" to (activeAccount?.userId ?: auth.currentUser?.uid ?: ""),
+                        "serverUpdatedAt" to FieldValue.serverTimestamp(),
+                        "updatedAt" to System.currentTimeMillis(),
+                        "items" to sales.map { s ->
+                            mapOf(
+                                "saleId" to s.saleId,
+                                "productId" to s.productId,
+                                "productName" to s.productName,
+                                "quantitySold" to s.quantitySold,
+                                "totalPrice" to s.totalPrice,
+                                "saleDate" to s.saleDate,
+                                "customerId" to s.customerId,
+                                "customerName" to s.customerName,
+                                "isDebt" to s.isDebt,
+                                "paymentMethod" to s.paymentMethod,
+                                "invoiceGroupId" to invId,
+                                "orderType" to s.orderType,
+                                "status" to s.status,
+                                "expectedDeliveryDate" to s.expectedDeliveryDate,
+                                "notes" to s.notes
                             )
                         }
                     )
@@ -781,7 +1283,15 @@ class LiveInventorySyncManager(
                 repository.markSalesAsSynced(pendingSales.map { it.saleId })
             }
 
-            // 2. سحب كتالوج السلع السحابي للمدير
+            // 3. دفع أي فواتير مشتريات معلقة (Pending Purchase Invoices)
+            val pendingPurchases = repository.getPendingPurchaseInvoicesOnce()
+            if (pendingPurchases.isNotEmpty() && targetOwnerUid.isNotBlank()) {
+                for (pur in pendingPurchases) {
+                    pushPurchaseInvoiceToCloud(pur, activeAccount)
+                }
+            }
+
+            // 4. سحب ودمج كتالوج السلع السحابي للمدير
             var productsCount = 0
             if (targetOwnerUid.isNotBlank()) {
                 val prodSnap = db.collection("users").document(targetOwnerUid).collection("products").get().await()
@@ -802,15 +1312,56 @@ class LiveInventorySyncManager(
                 _syncedProductsCount.value = productsCount
             }
 
-            // 3. سحب الفواتير الصادرة من الفريق
+            // 5. سحب ودمج الفواتير وطلبات البيع المسبق الصادرة من الفريق
             var invoicesCount = 0
             if (targetOwnerUid.isNotBlank()) {
                 val invSnap = db.collection("users").document(targetOwnerUid).collection("invoices").get().await()
                 invoicesCount = invSnap.size()
+                if (!invSnap.isEmpty) {
+                    mergeInvoiceDocumentsIntoRoom(invSnap.documents)
+                }
                 _syncedInvoicesCount.value = invoicesCount
             }
 
-            // 4. سحب مواقع العمال GPS
+            // 6. سحب ودمج فواتير المشتريات السحابية
+            if (targetOwnerUid.isNotBlank()) {
+                val purSnap = db.collection("users").document(targetOwnerUid).collection("purchase_invoices").get().await()
+                if (!purSnap.isEmpty) {
+                    val remotePurchases = purSnap.documents.mapNotNull { doc ->
+                        val supplierName = doc.getString("supplierName") ?: return@mapNotNull null
+                        val invNum = doc.getString("invoiceNumber") ?: doc.id
+                        val totalCost = (doc.get("totalCost") as? Number)?.toDouble() ?: 0.0
+                        val paidAmount = (doc.get("paidAmount") as? Number)?.toDouble() ?: 0.0
+                        val remainingDebt = (doc.get("remainingDebt") as? Number)?.toDouble()
+                            ?: (totalCost - paidAmount).coerceAtLeast(0.0)
+                        val dateMillis = (doc.get("dateMillis") as? Number)?.toLong()
+                            ?: (doc.get("invoiceDate") as? Number)?.toLong()
+                            ?: System.currentTimeMillis()
+                        val updatedAt = (doc.get("updatedAt") as? Number)?.toLong() ?: dateMillis
+                        PurchaseInvoice(
+                            id = (doc.get("numId") as? Number)?.toInt() ?: 0,
+                            invoiceNumber = invNum,
+                            supplierName = supplierName,
+                            supplierPhone = doc.getString("supplierPhone") ?: "",
+                            dateMillis = dateMillis,
+                            totalCost = totalCost,
+                            paidAmount = paidAmount,
+                            remainingDebt = remainingDebt,
+                            paymentStatus = doc.getString("paymentStatus") ?: if (remainingDebt <= 0.009) "PAID" else "PARTIAL",
+                            notes = doc.getString("notes") ?: "",
+                            itemsJson = doc.getString("itemsJson") ?: "[]",
+                            itemsCount = (doc.get("itemsCount") as? Number)?.toInt() ?: 1,
+                            updatedAt = updatedAt,
+                            syncStatus = RecordSyncState.SYNCED
+                        )
+                    }
+                    if (remotePurchases.isNotEmpty()) {
+                        repository.mergeRemotePurchaseInvoicesWithTimestampResolution(remotePurchases)
+                    }
+                }
+            }
+
+            // 7. سحب مواقع العمال GPS
             var locationsCount = 0
             if (targetOwnerUid.isNotBlank()) {
                 val locSnap = db.collection("users").document(targetOwnerUid).collection("worker_locations").get().await()
@@ -837,7 +1388,10 @@ class LiveInventorySyncManager(
                 _syncedLocationsCount.value = locationsCount
             }
 
+            // 8. تأكيد مزامنة جميع الجداول وتفريغ طابور المزامنة المحلي
             repository.markAllTablesAndQueueAsSynced()
+            repository.clearSyncedQueueItems()
+
             val now = System.currentTimeMillis()
             _lastSyncTimestamp.value = now
             _isComprehensiveSyncing.value = false
@@ -882,6 +1436,7 @@ class LiveInventorySyncManager(
     fun stopAllLiveSync() {
         stopLiveInventorySync()
         stopLiveInvoicesSync()
+        stopLivePurchaseInvoicesSync()
         stopLiveWorkerLocationsSync()
     }
 

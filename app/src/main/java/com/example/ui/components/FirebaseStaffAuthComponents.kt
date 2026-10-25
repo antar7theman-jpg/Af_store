@@ -198,11 +198,11 @@ fun attemptAutoSignIn(
         onAuthSuccess()
         return
     }
-    val resId = context.resources.getIdentifier("default_web_client_id", "string", context.packageName)
-    val clientId = if (resId != 0) {
-        try { context.getString(resId) } catch (e: Exception) { "" }
-    } else {
-        ""
+    val clientId = try {
+        context.getString(R.string.default_web_client_id)
+    } catch (e: Exception) {
+        onUnauthenticated()
+        return
     }
     if (clientId.isBlank()) {
         onUnauthenticated()
@@ -247,11 +247,11 @@ fun onGoogleSignInClicked(
     scope: CoroutineScope,
     onAuthCancelled: () -> Unit = {}
 ) {
-    val resId = context.resources.getIdentifier("default_web_client_id", "string", context.packageName)
-    val clientId = if (resId != 0) {
-        try { context.getString(resId) } catch (e: Exception) { "" }
-    } else {
-        ""
+    val clientId = try {
+        context.getString(R.string.default_web_client_id)
+    } catch (e: Exception) {
+        onAuthError("إعداد Google Sign-In غير مكتمل: لم يتم العثور على default_web_client_id")
+        return
     }
     if (clientId.isBlank()) {
         onAuthError("إعداد Google Sign-In غير مكتمل: لم يتم العثور على default_web_client_id")
@@ -3226,13 +3226,9 @@ private fun StaffPendingApprovalScreen(
     }
 
     val statusDescription = when (account.approvalStatus) {
-        StaffApprovalStatus.REJECTED -> "قامت إدارة المتجر برفض طلب الدخول الحالي. يمكنك التواصل مع مالك المتجر (Deffas antar)."
+        StaffApprovalStatus.REJECTED -> "قامت إدارة المتجر برفض طلب الدخول الحالي. يمكنك تعديل بيانات الطلب أو التواصل مع مالك المتجر (Deffas antar)."
         StaffApprovalStatus.SUSPENDED -> "تم تعليق صلاحية دخول هذا الحساب مؤقتاً. تواصل مع مالك المتجر أو المدير لإعادة تفعيل الحساب."
-        else -> if (account.syncMode == "lite") {
-            "تم استلام طلب فتح حساب Lite / offline لمتجر «${account.branchName}» بنجاح! طلبك حالياً بانتظار مراجعة وموافقة المالك (Deffas antar). ستفتح لك شاشات المتجر فور اعتماد الحساب."
-        } else {
-            "تم تسجيل طلبك كعامل في سحابة Firebase! بمجرد ضغط المالك (Deffas antar) أو المدير على «موافقة على الدخول» ستفتح لك شاشات المتجر تلقائياً في نفس اللحظة."
-        }
+        else -> "تم تسجيل طلبك كعامل في سحابة Firebase! بمجرد ضغط المالك (Deffas antar) أو المدير على «موافقة على الدخول» ستفتح لك شاشات المتجر تلقائياً في نفس اللحظة."
     }
 
     Scaffold(
@@ -5300,7 +5296,7 @@ private fun StaffAccountApprovalItemCard(
     val displayDate = remember(staff.updatedAt, staff.createdAt) {
         val ts: Timestamp? = staff.updatedAt ?: staff.createdAt
         if (ts != null) {
-            SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.ENGLISH).format(ts.toDate())
+            SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(ts.toDate())
         } else {
             "الآن"
         }
@@ -6398,31 +6394,6 @@ fun PendingManagerRequestsDialog(
                                                 )
                                             }
                                         }
-                                    } else if (acc.syncMode == "lite") {
-                                        Surface(
-                                            shape = RoundedCornerShape(6.dp),
-                                            color = Color(0xFF059669).copy(alpha = 0.18f),
-                                            border = BorderStroke(1.dp, Color(0xFF059669).copy(alpha = 0.7f))
-                                        ) {
-                                            Row(
-                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                                                verticalAlignment = Alignment.CenterVertically,
-                                                horizontalArrangement = Arrangement.spacedBy(3.dp)
-                                            ) {
-                                                Icon(
-                                                    imageVector = Icons.Default.CloudOff,
-                                                    contentDescription = null,
-                                                    tint = Color(0xFF059669),
-                                                    modifier = Modifier.size(12.dp)
-                                                )
-                                                Text(
-                                                    text = "طلب حساب Lite مجاني 🔒",
-                                                    fontSize = 10.sp,
-                                                    fontWeight = FontWeight.ExtraBold,
-                                                    color = Color(0xFF059669)
-                                                )
-                                            }
-                                        }
                                     } else {
                                         Surface(
                                             shape = RoundedCornerShape(6.dp),
@@ -6469,9 +6440,7 @@ fun PendingManagerRequestsDialog(
                                                     val res = repository.approvePendingManagerRequest(acc, asTrial7Days = acc.isTrial)
                                                     if (res.isSuccess) {
                                                         val approved = res.getOrThrow()
-                                                        actionFeedbackMessage = if (approved.syncMode == "lite") {
-                                                            "تم قبول وتفعيل حساب Lite المجاني للمدير «${approved.fullName}» بنجاح! يمكنه الدخول واستخدام التطبيق الآن."
-                                                        } else if (approved.isTrial) {
+                                                        actionFeedbackMessage = if (approved.isTrial) {
                                                             "تم قبول وتفعيل الحساب التجريبي Pro (7 أيام) للمدير «${approved.fullName}» بنجاح! يمكنه الدخول الآن فوراً."
                                                         } else {
                                                             "تم قبول المدير «${approved.fullName}» بنجاح! يمكنه الآن الدخول من أي هاتف."
@@ -6485,11 +6454,7 @@ fun PendingManagerRequestsDialog(
                                             },
                                             enabled = !isProcessing,
                                             colors = ButtonDefaults.buttonColors(
-                                                containerColor = when {
-                                                    acc.syncMode == "lite" -> Color(0xFF059669)
-                                                    acc.isTrial -> Color(0xFFD97706)
-                                                    else -> semantic.profitGreen
-                                                },
+                                                containerColor = if (acc.isTrial) Color(0xFFD97706) else semantic.profitGreen,
                                                 contentColor = Color.White
                                             ),
                                             shape = RoundedCornerShape(10.dp),
@@ -6505,11 +6470,7 @@ fun PendingManagerRequestsDialog(
                                                 Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
                                                 Spacer(modifier = Modifier.width(4.dp))
                                                 Text(
-                                                    text = when {
-                                                        acc.syncMode == "lite" -> "قبول وتفعيل حساب Lite ✓"
-                                                        acc.isTrial -> "قبول وتفعيل التجربة (7 أيام) ✓"
-                                                        else -> "قبول وتفعيل كامل الصلاحيات"
-                                                    },
+                                                    text = if (acc.isTrial) "قبول وتفعيل التجربة (7 أيام) ✓" else "قبول وتفعيل كامل الصلاحيات",
                                                     fontSize = 11.sp,
                                                     fontWeight = FontWeight.Bold
                                                 )
@@ -6522,11 +6483,7 @@ fun PendingManagerRequestsDialog(
                                                 coroutineScope.launch {
                                                     val res = repository.rejectPendingManagerRequest(acc)
                                                     if (res.isSuccess) {
-                                                        actionFeedbackMessage = if (acc.syncMode == "lite") {
-                                                            "تم رفض طلب حساب Lite للمدير «${acc.fullName}»."
-                                                        } else {
-                                                            "تم رفض طلب المدير «${acc.fullName}»."
-                                                        }
+                                                        actionFeedbackMessage = "تم رفض طلب المدير «${acc.fullName}»."
                                                         onAccountRejected(acc)
                                                     }
                                                     processingAccountId = null
@@ -6582,8 +6539,7 @@ fun PendingManagerRequestsDialog(
                     }
                 }
 
-                val approvedLiteAccounts = liteAccounts.filter { it.approvalStatus == StaffApprovalStatus.APPROVED }
-                if (approvedLiteAccounts.isNotEmpty()) {
+                if (liteAccounts.isNotEmpty()) {
                     Spacer(modifier = Modifier.height(16.dp))
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                     Spacer(modifier = Modifier.height(12.dp))
@@ -6606,7 +6562,7 @@ fun PendingManagerRequestsDialog(
                             )
                         }
                         Text(
-                            text = "حسابات Lite / Offline المعتمدة (${approvedLiteAccounts.size}):",
+                            text = "إشعارات حسابات Lite / Offline المنشأة (${liteAccounts.size}):",
                             fontWeight = FontWeight.Bold,
                             fontSize = 13.5.sp,
                             color = Color(0xFF059669)
@@ -6615,7 +6571,7 @@ fun PendingManagerRequestsDialog(
 
                     Spacer(modifier = Modifier.height(8.dp))
 
-                    approvedLiteAccounts.forEach { liteAcc ->
+                    liteAccounts.forEach { liteAcc ->
                         Card(
                             shape = RoundedCornerShape(14.dp),
                             colors = CardDefaults.cardColors(
@@ -6643,7 +6599,7 @@ fun PendingManagerRequestsDialog(
                                         border = BorderStroke(1.dp, Color(0xFF059669).copy(alpha = 0.7f))
                                     ) {
                                         Text(
-                                            text = "حساب Lite معتمد ✓",
+                                            text = "مفعّل تلقائياً (مجاني) ✓",
                                             fontSize = 10.sp,
                                             fontWeight = FontWeight.Bold,
                                             color = Color(0xFF059669),
@@ -6676,7 +6632,7 @@ fun PendingManagerRequestsDialog(
                                     )
                                 }
                                 Text(
-                                    text = "حساب Lite مجاني معتمد ومفعّل من قبل المالك",
+                                    text = "حساب Lite مجاني لا يتطلب موافقة المالك - للتواصل والتوثيق فقط",
                                     fontSize = 10.5.sp,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f),
                                     modifier = Modifier.padding(top = 4.dp)

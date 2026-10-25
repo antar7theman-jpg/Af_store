@@ -1,3 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">My Application</string>
+    <string name="app_name">af store</string>
+    <string name="store_subtitle">نظام المبيعات والمخازن السحابي المتكامل</string>
+    <string name="tab_pos">نقطة البيع</string>
+    <string name="tab_inventory">المخزون</string>
+    <string name="tab_invoices">الفواتير</string>
+    <string name="tab_purchases">المشتريات</string>
+    <string name="tab_customers">العملاء والديون</string>
+    <string name="tab_reports">التقارير</string>
+    <string name="tab_settings">الإعدادات</string>
+    <string name="sync_now">مزامنة الآن</string>
+    <string name="test_connection">فحص الاتصال</string>
+    <string name="upload_backup">رفع نسخة احتياطية</string>
+    <string name="restore_backup">استعادة النسخة الاحتياطية</string>
 </resources>
