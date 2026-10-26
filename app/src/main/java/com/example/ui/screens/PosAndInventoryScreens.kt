@@ -50,6 +50,7 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -176,6 +177,20 @@ fun PosScreen(
     val unregisteredScannedBarcode by viewModel.unregisteredScannedBarcode.collectAsState()
         val lastScannedPosEvent by viewModel.lastScannedPosEvent.collectAsState()
     val lowStockProducts by viewModel.lowStockProducts.collectAsState()
+    val lastAddedCartProductId by viewModel.lastAddedCartProductId.collectAsState()
+    val cartLazyListState = rememberLazyListState()
+
+    LaunchedEffect(lastAddedCartProductId, cartItems.size, cartItems.sumOf { it.quantity }) {
+        val targetId = lastAddedCartProductId
+        if (targetId != null) {
+            val targetIndex = cartItems.indexOfFirst { it.product.id == targetId }
+            if (targetIndex >= 0) {
+                cartLazyListState.animateScrollToItem(targetIndex)
+            }
+        } else if (cartItems.isNotEmpty()) {
+            cartLazyListState.animateScrollToItem(cartItems.lastIndex)
+        }
+    }
 
     var searchQuery by rememberSaveable { mutableStateOf("") }
     var debouncedSearchQuery by remember { mutableStateOf("") }
@@ -727,6 +742,7 @@ fun PosScreen(
                                     }
                                 } else {
                                     LazyColumn(
+                                        state = cartLazyListState,
                                         modifier = Modifier.fillMaxSize(),
                                         verticalArrangement = Arrangement.spacedBy(10.dp),
                                         contentPadding = PaddingValues(vertical = 10.dp, horizontal = 2.dp)
@@ -736,18 +752,22 @@ fun PosScreen(
                                             key = { _, it -> "cart_item_${it.product.id}" },
                                             contentType = { _, _ -> "pos_cart_item" }
                                         ) { index, item ->
+                                            val isRecentlyAdded = (item.product.id == lastAddedCartProductId)
                                             Surface(
                                                 modifier = Modifier.fillMaxWidth(),
                                                 shape = RoundedCornerShape(14.dp),
-                                                color = if (semantic.isDark) {
+                                                color = if (isRecentlyAdded) {
+                                                    if (semantic.isDark) Color(0xFF10B981).copy(alpha = 0.12f) else Color(0xFFECFDF5)
+                                                } else if (semantic.isDark) {
                                                     MaterialTheme.colorScheme.surface
                                                 } else {
                                                     Color.White
                                                 },
-                                                shadowElevation = if (semantic.isDark) 1.dp else 3.5.dp,
+                                                shadowElevation = if (isRecentlyAdded) 4.5.dp else if (semantic.isDark) 1.dp else 3.dp,
                                                 border = BorderStroke(
-                                                    1.4.dp,
-                                                    if (item.isItemDebt) Color(0xFFD97706)
+                                                    if (isRecentlyAdded) 2.2.dp else 1.4.dp,
+                                                    if (isRecentlyAdded) Color(0xFF10B981)
+                                                    else if (item.hasAnyDebt) Color(0xFFD97706)
                                                     else if (semantic.isDark) semantic.cardBorder.copy(alpha = 0.85f)
                                                     else Color(0xFFCBD5E1)
                                                 )
@@ -760,10 +780,11 @@ fun PosScreen(
                                                     // Vertical accent indicator strip
                                                     Box(
                                                         modifier = Modifier
-                                                            .width(5.dp)
+                                                            .width(if (isRecentlyAdded) 6.dp else 5.dp)
                                                             .fillMaxHeight()
                                                             .background(
-                                                                if (item.isItemDebt) Color(0xFFD97706)
+                                                                if (isRecentlyAdded) Color(0xFF10B981)
+                                                                else if (item.hasAnyDebt) Color(0xFFD97706)
                                                                 else MaterialTheme.colorScheme.primary
                                                             )
                                                     )
@@ -774,47 +795,43 @@ fun PosScreen(
                                                             .padding(horizontal = 9.dp, vertical = 8.dp),
                                                         verticalArrangement = Arrangement.spacedBy(6.dp)
                                                     ) {
-                                                        // Top row: Item index badge + Name + Remove button
+                                                        // Top header row: Item index badge + "آخر إضافة" tag + Remove button
                                                         Row(
                                                             modifier = Modifier.fillMaxWidth(),
                                                             horizontalArrangement = Arrangement.SpaceBetween,
                                                             verticalAlignment = Alignment.CenterVertically
                                                         ) {
                                                             Row(
-                                                                modifier = Modifier.weight(1f),
                                                                 verticalAlignment = Alignment.CenterVertically,
                                                                 horizontalArrangement = Arrangement.spacedBy(6.dp)
                                                             ) {
                                                                 Surface(
                                                                     shape = RoundedCornerShape(6.dp),
-                                                                    color = (if (item.isItemDebt) Color(0xFFD97706) else MaterialTheme.colorScheme.primary).copy(alpha = 0.14f)
+                                                                    color = (if (isRecentlyAdded) Color(0xFF10B981) else if (item.hasAnyDebt) Color(0xFFD97706) else MaterialTheme.colorScheme.primary).copy(alpha = 0.14f)
                                                                 ) {
                                                                     Text(
                                                                         text = "#${index + 1}",
                                                                         fontSize = 10.sp,
                                                                         fontWeight = FontWeight.Bold,
-                                                                        color = if (item.isItemDebt) Color(0xFFD97706) else MaterialTheme.colorScheme.primary,
+                                                                        color = if (isRecentlyAdded) Color(0xFF10B981) else if (item.hasAnyDebt) Color(0xFFD97706) else MaterialTheme.colorScheme.primary,
                                                                         modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
                                                                     )
                                                                 }
-                                                                Text(
-                                                                    text = item.product.name,
-                                                                    fontWeight = FontWeight.Bold,
-                                                                    fontSize = 12.5.sp,
-                                                                    maxLines = 1,
-                                                                    overflow = TextOverflow.Ellipsis,
-                                                                    color = if (semantic.isDark) {
-                                                                        MaterialTheme.colorScheme.onSurface
-                                                                    } else {
-                                                                        Color(0xFF0F172A)
-                                                                    },
-                                                                    modifier = Modifier
-                                                                        .clickable {
-                                                                            val liveProd = products.find { it.id == item.product.id } ?: item.product
-                                                                            selectedProductForImagePreview = liveProd
-                                                                        }
-                                                                        .testTag("pos_cart_product_name_${item.product.id}")
-                                                                )
+                                                                if (isRecentlyAdded) {
+                                                                    Surface(
+                                                                        shape = RoundedCornerShape(6.dp),
+                                                                        color = Color(0xFF10B981).copy(alpha = 0.20f),
+                                                                        border = BorderStroke(1.dp, Color(0xFF10B981).copy(alpha = 0.8f))
+                                                                    ) {
+                                                                        Text(
+                                                                            text = "آخر إضافة ✓",
+                                                                            fontSize = 9.sp,
+                                                                            fontWeight = FontWeight.ExtraBold,
+                                                                            color = Color(0xFF10B981),
+                                                                            modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
+                                                                        )
+                                                                    }
+                                                                }
                                                             }
 
                                                             Surface(
@@ -840,7 +857,30 @@ fun PosScreen(
                                                             }
                                                         }
 
-                                                        // Bottom row: Total price + Counter controls
+                                                        // Full product name: Spans full width of card for clean, harmonious reading
+                                                        Text(
+                                                            text = item.product.name,
+                                                            fontWeight = FontWeight.Bold,
+                                                            fontSize = 12.5.sp,
+                                                            maxLines = Int.MAX_VALUE,
+                                                            softWrap = true,
+                                                            overflow = TextOverflow.Clip,
+                                                            lineHeight = 17.sp,
+                                                            color = if (semantic.isDark) {
+                                                                MaterialTheme.colorScheme.onSurface
+                                                            } else {
+                                                                Color(0xFF0F172A)
+                                                            },
+                                                            modifier = Modifier
+                                                                .fillMaxWidth()
+                                                                .clickable {
+                                                                    val liveProd = products.find { it.id == item.product.id } ?: item.product
+                                                                    selectedProductForImagePreview = liveProd
+                                                                }
+                                                                .testTag("pos_cart_product_name_${item.product.id}")
+                                                        )
+
+                                                        // Bottom row: Total price + Stepper controls (minus button only, removed + button)
                                                         Row(
                                                             modifier = Modifier.fillMaxWidth(),
                                                             horizontalArrangement = Arrangement.SpaceBetween,
@@ -895,27 +935,6 @@ fun PosScreen(
                                                                         },
                                                                         modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
                                                                     )
-                                                                }
-                                                                Surface(
-                                                                    onClick = {
-                                                                        if (isPreSaleMode) viewModel.adjustPreSaleCartItemUnits(item.product.id, 1) else viewModel.adjustCartItemUnits(item.product.id, 1)
-                                                                    },
-                                                                    shape = RoundedCornerShape(7.dp),
-                                                                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.20f),
-                                                                    border = BorderStroke(
-                                                                        1.2.dp,
-                                                                        MaterialTheme.colorScheme.primary.copy(alpha = if (semantic.isDark) 0.65f else 0.90f)
-                                                                    ),
-                                                                    modifier = Modifier.size(26.dp)
-                                                                ) {
-                                                                    Box(contentAlignment = Alignment.Center) {
-                                                                        Icon(
-                                                                            Icons.Default.Add,
-                                                                            contentDescription = "زيادة",
-                                                                            tint = MaterialTheme.colorScheme.primary,
-                                                                            modifier = Modifier.size(14.dp)
-                                                                        )
-                                                                    }
                                                                 }
                                                             }
                                                         }
@@ -1845,7 +1864,7 @@ private fun ResponsivePosProductCard(
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                    verticalAlignment = Alignment.Top
                 ) {
                     Column(
                         modifier = Modifier
@@ -1857,11 +1876,13 @@ private fun ResponsivePosProductCard(
                             query = searchHighlightQuery,
                             fontWeight = FontWeight.Bold,
                             style = MaterialTheme.typography.bodyMedium.copy(
-                                fontSize = if (isCompactCard) 13.sp else 14.sp
+                                fontSize = if (isCompactCard) 13.sp else 14.sp,
+                                lineHeight = 18.sp
                             ),
                             color = MaterialTheme.colorScheme.onSurface,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
+                            maxLines = Int.MAX_VALUE,
+                            softWrap = true,
+                            overflow = TextOverflow.Clip,
                             modifier = Modifier.testTag("pos_product_name_${product.id}")
                         )
                         val trimmedCat = product.category.trim()
@@ -2467,7 +2488,7 @@ fun InventoryScreen(
                                     .fillMaxWidth()
                                     .padding(12.dp),
                                 horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
+                                verticalAlignment = Alignment.Top
                             ) {
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(
@@ -2475,6 +2496,8 @@ fun InventoryScreen(
                                         fontWeight = FontWeight.Bold,
                                         fontSize = 15.sp,
                                         color = MaterialTheme.colorScheme.primary,
+                                        maxLines = Int.MAX_VALUE,
+                                        softWrap = true,
                                         modifier = Modifier
                                             .clickable { selectedProductForImagePreview = product }
                                             .testTag("inventory_product_name_${product.id}")
@@ -2625,7 +2648,7 @@ fun InventoryScreen(
                                     .fillMaxWidth()
                                     .padding(12.dp),
                                 horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
+                                verticalAlignment = Alignment.Top
                             ) {
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(
@@ -2633,6 +2656,8 @@ fun InventoryScreen(
                                         fontWeight = FontWeight.Bold,
                                         fontSize = 15.sp,
                                         color = MaterialTheme.colorScheme.primary,
+                                        maxLines = Int.MAX_VALUE,
+                                        softWrap = true,
                                         modifier = Modifier
                                             .clickable { selectedProductForImagePreview = product }
                                             .testTag("inventory_product_name_${product.id}")

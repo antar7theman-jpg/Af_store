@@ -224,7 +224,7 @@ fun InvoiceTemplatePreviewDialog(
                     finalLineTotal = item.lineSubtotal,
                     unitsPerCarton = item.unitsPerCartonSafe,
                     barcode = item.product.barcode.ifBlank { "622100100${idx + 1}" },
-                    isDebt = wholeCartDebt || item.isItemDebt
+                    isDebt = wholeCartDebt || item.hasAnyDebt
                 )
             }
         } else if (archivedInvoice != null) {
@@ -2313,7 +2313,7 @@ private fun TemplateKReceiptContent(
                     fontFamily = FontFamily.Monospace,
                     fontWeight = FontWeight.Bold,
                     fontSize = 12.sp,
-                    color = inkMuted,
+                    color = Color.Black,
                     textAlign = TextAlign.Center
                 )
             }
@@ -2343,14 +2343,14 @@ private fun TemplateKReceiptContent(
                             fontFamily = FontFamily.Monospace,
                             fontWeight = FontWeight.Black,
                             fontSize = 13.sp,
-                            color = inkBlack
+                            color = Color.Black
                         )
                         Text(
                             text = "Date: $formattedDateTime",
                             fontFamily = FontFamily.Monospace,
                             fontWeight = FontWeight.SemiBold,
                             fontSize = 11.5.sp,
-                            color = inkBlack
+                            color = Color.Black
                         )
                     }
                     Row(
@@ -2363,14 +2363,15 @@ private fun TemplateKReceiptContent(
                             fontFamily = FontFamily.Monospace,
                             fontWeight = FontWeight.Bold,
                             fontSize = 12.5.sp,
-                            color = inkBlack
+                            color = Color.Black
                         )
                         if (cashierName.isNotBlank()) {
                             Text(
                                 text = "Vendeur: $cashierName",
                                 fontFamily = FontFamily.Monospace,
+                                fontWeight = FontWeight.SemiBold,
                                 fontSize = 11.sp,
-                                color = inkMuted
+                                color = Color.Black
                             )
                         }
                     }
@@ -2405,20 +2406,20 @@ private fun TemplateKReceiptContent(
                                     fontFamily = FontFamily.Monospace,
                                     fontWeight = FontWeight.ExtraBold,
                                     fontSize = 11.5.sp,
-                                    color = inkBlack
+                                    color = Color.Black
                                 )
                                 Text(
                                     text = "موقع تسليم العميل (خرائط Google)",
                                     fontWeight = FontWeight.Bold,
                                     fontSize = 10.5.sp,
-                                    color = inkBlack
+                                    color = Color.Black
                                 )
                                 Spacer(Modifier.height(3.dp))
                                 Text(
                                     text = "Scanner avec l'appareil photo pour ouvrir Google Maps",
                                     fontFamily = FontFamily.Monospace,
                                     fontSize = 9.sp,
-                                    color = Color(0xFF475569),
+                                    color = Color.Black,
                                     lineHeight = 12.sp
                                 )
                             }
@@ -2494,7 +2495,7 @@ private fun TemplateKReceiptContent(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        // Article with [3] or [0] +6 packaging tag
+                        // Article with [3] or [0] +6 packaging tag + Complete item name + Debt indicator in black
                         Row(
                             modifier = Modifier.weight(2.2f),
                             verticalAlignment = Alignment.CenterVertically
@@ -2509,27 +2510,41 @@ private fun TemplateKReceiptContent(
                                     fontFamily = FontFamily.Monospace,
                                     fontWeight = FontWeight.Black,
                                     fontSize = 11.5.sp,
-                                    color = inkBlack,
+                                    color = Color.Black,
                                     modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
                                 )
                             }
                             Spacer(modifier = Modifier.width(5.dp))
-                            Text(
-                                text = line.name,
-                                fontFamily = FontFamily.Default,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 12.sp,
-                                color = inkBlack,
-                                maxLines = 2
-                            )
-                            if (line.isDebt) {
-                                Text(
-                                    text = " (Dette)",
-                                    fontSize = 10.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = Color(0xFFDC2626)
-                                )
+                            val lineTitle = buildAnnotatedString {
+                                withStyle(
+                                    SpanStyle(
+                                        fontFamily = FontFamily.Default,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 12.sp,
+                                        color = Color.Black
+                                    )
+                                ) {
+                                    append(line.name)
+                                }
+                                if (line.isDebt) {
+                                    append(" ")
+                                    withStyle(
+                                        SpanStyle(
+                                            fontFamily = FontFamily.Default,
+                                            fontWeight = FontWeight.ExtraBold,
+                                            fontSize = 11.sp,
+                                            color = Color.Black
+                                        )
+                                    ) {
+                                        append("(دين)")
+                                    }
+                                }
                             }
+                            Text(
+                                text = lineTitle,
+                                modifier = Modifier.weight(1f),
+                                lineHeight = 16.sp
+                            )
                         }
 
                         // Qtt
@@ -2540,7 +2555,7 @@ private fun TemplateKReceiptContent(
                             fontFamily = FontFamily.Monospace,
                             fontWeight = FontWeight.Bold,
                             fontSize = 12.sp,
-                            color = inkBlack
+                            color = Color.Black
                         )
 
                         // Prix
@@ -2551,7 +2566,7 @@ private fun TemplateKReceiptContent(
                             fontFamily = FontFamily.Monospace,
                             fontWeight = FontWeight.SemiBold,
                             fontSize = 12.sp,
-                            color = inkBlack
+                            color = Color.Black
                         )
 
                         // Montant
@@ -2562,7 +2577,7 @@ private fun TemplateKReceiptContent(
                             fontFamily = FontFamily.Monospace,
                             fontWeight = FontWeight.ExtraBold,
                             fontSize = 12.sp,
-                            color = inkBlack
+                            color = Color.Black
                         )
                     }
 
@@ -2575,7 +2590,7 @@ private fun TemplateKReceiptContent(
                             text = subNotes,
                             fontFamily = FontFamily.Monospace,
                             fontSize = 10.sp,
-                            color = inkMuted,
+                            color = Color.Black,
                             modifier = Modifier.padding(start = 24.dp, top = 2.dp)
                         )
                     }
@@ -2588,7 +2603,7 @@ private fun TemplateKReceiptContent(
             }
 
             Spacer(modifier = Modifier.height(8.dp))
-            ReceiptSectionSolidDivider(color = inkBlack)
+            ReceiptSectionSolidDivider(color = Color.Black)
             Spacer(modifier = Modifier.height(8.dp))
 
             // Subtotals
@@ -2597,8 +2612,8 @@ private fun TemplateKReceiptContent(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Text("Sous-Total:", fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold, fontSize = 12.sp, color = inkBlack)
-                    Text("${String.format(Locale.US, "%.2f", sousTotal)} $currency", fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold, fontSize = 12.sp, color = inkBlack)
+                    Text("Sous-Total:", fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold, fontSize = 12.sp, color = Color.Black)
+                    Text("${String.format(Locale.US, "%.2f", sousTotal)} $currency", fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold, fontSize = 12.sp, color = Color.Black)
                 }
             }
             if (discountAmount > 0.0) {
@@ -2607,8 +2622,8 @@ private fun TemplateKReceiptContent(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Text("Remise ($discountPercentInt%):", fontFamily = FontFamily.Monospace, fontSize = 11.5.sp, color = Color(0xFFDC2626))
-                    Text("-${String.format(Locale.US, "%.2f", discountAmount)} $currency", fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold, fontSize = 11.5.sp, color = Color(0xFFDC2626))
+                    Text("Remise ($discountPercentInt%):", fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold, fontSize = 11.5.sp, color = Color.Black)
+                    Text("-${String.format(Locale.US, "%.2f", discountAmount)} $currency", fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold, fontSize = 11.5.sp, color = Color.Black)
                 }
             }
             if (tvaAmount > 0.0) {
@@ -2617,8 +2632,8 @@ private fun TemplateKReceiptContent(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Text("TVA:", fontFamily = FontFamily.Monospace, fontSize = 11.5.sp, color = inkBlack)
-                    Text("+${String.format(Locale.US, "%.2f", tvaAmount)} $currency", fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold, fontSize = 11.5.sp, color = inkBlack)
+                    Text("TVA:", fontFamily = FontFamily.Monospace, fontSize = 11.5.sp, color = Color.Black)
+                    Text("+${String.format(Locale.US, "%.2f", tvaAmount)} $currency", fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold, fontSize = 11.5.sp, color = Color.Black)
                 }
             }
 
@@ -2629,7 +2644,7 @@ private fun TemplateKReceiptContent(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(8.dp),
                 color = Color(0xFFF8FAFC),
-                border = BorderStroke(2.dp, inkBlack)
+                border = BorderStroke(2.dp, Color.Black)
             ) {
                 Row(
                     modifier = Modifier
@@ -2643,14 +2658,14 @@ private fun TemplateKReceiptContent(
                         fontFamily = FontFamily.Monospace,
                         fontWeight = FontWeight.Black,
                         fontSize = 17.sp,
-                        color = inkBlack
+                        color = Color.Black
                     )
                     Text(
                         text = "${String.format(Locale.US, "%.2f", netTotal)} DA",
                         fontFamily = FontFamily.Monospace,
                         fontWeight = FontWeight.Black,
                         fontSize = 18.sp,
-                        color = inkBlack
+                        color = Color.Black
                     )
                 }
             }
@@ -2665,8 +2680,8 @@ private fun TemplateKReceiptContent(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Text("Payment:", fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold, fontSize = 12.sp, color = inkBlack)
-                Text(payMethodStr, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold, fontSize = 12.sp, color = inkBlack)
+                Text("Payment:", fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold, fontSize = 12.sp, color = Color.Black)
+                Text(payMethodStr, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold, fontSize = 12.sp, color = Color.Black)
             }
 
             Spacer(modifier = Modifier.height(6.dp))
@@ -2683,14 +2698,14 @@ private fun TemplateKReceiptContent(
                     fontFamily = FontFamily.Monospace,
                     fontWeight = FontWeight.Bold,
                     fontSize = 11.5.sp,
-                    color = inkBlack
+                    color = Color.Black
                 )
                 Text(
                     text = "Ancien ${String.format(Locale.US, "%.2f", ancien)} DA -- Nouveau ${String.format(Locale.US, "%.2f", nouveau)} DA",
                     fontFamily = FontFamily.Monospace,
                     fontWeight = FontWeight.Bold,
                     fontSize = 11.5.sp,
-                    color = inkBlack
+                    color = Color.Black
                 )
             }
             Spacer(modifier = Modifier.height(3.dp))
@@ -2703,14 +2718,14 @@ private fun TemplateKReceiptContent(
                     fontFamily = FontFamily.Monospace,
                     fontWeight = FontWeight.Bold,
                     fontSize = 11.5.sp,
-                    color = inkBlack
+                    color = Color.Black
                 )
                 Text(
                     text = "Ancien ${String.format(Locale.US, "%.2f", ancien)} DA -- Nouveau ${String.format(Locale.US, "%.2f", nouveau)} DA",
                     fontFamily = FontFamily.Monospace,
                     fontWeight = FontWeight.Bold,
                     fontSize = 11.5.sp,
-                    color = inkBlack
+                    color = Color.Black
                 )
             }
 
@@ -2724,7 +2739,7 @@ private fun TemplateKReceiptContent(
                     text = footerText,
                     fontFamily = FontFamily.Monospace,
                     fontSize = 11.sp,
-                    color = inkMuted,
+                    color = Color.Black,
                     textAlign = TextAlign.Center
                 )
                 Spacer(modifier = Modifier.height(4.dp))
@@ -2741,7 +2756,7 @@ private fun TemplateKReceiptContent(
                     text = devText,
                     fontWeight = FontWeight.ExtraBold,
                     fontSize = 13.sp,
-                    color = Color(0xFF0F172A),
+                    color = Color.Black,
                     modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
                 )
             }
@@ -3728,7 +3743,7 @@ internal fun exportAndShareInvoicePdf(
             // Table Header Bar: Article | Qtt | Prix | Montant
             val tableHeaderPaint = Paint().apply {
                 isAntiAlias = true
-                color = android.graphics.Color.rgb(15, 23, 42)
+                color = android.graphics.Color.BLACK
                 this.style = Paint.Style.FILL
             }
             val tableHeaderTextPaint = Paint().apply {
@@ -3749,7 +3764,7 @@ internal fun exportAndShareInvoicePdf(
 
             val itemDividerPaint = Paint().apply {
                 isAntiAlias = true
-                color = android.graphics.Color.rgb(71, 85, 105)
+                color = android.graphics.Color.BLACK
                 strokeWidth = 1.1f
                 this.style = Paint.Style.STROKE
                 pathEffect = android.graphics.DashPathEffect(floatArrayOf(6f, 4f), 0f)
@@ -3757,8 +3772,9 @@ internal fun exportAndShareInvoicePdf(
 
             lines.forEachIndexed { idx, line ->
                 val packLabel = formatPackagingLabel(line.quantityPieces, line.safeUnitsPerCarton)
+                val debtTag = if (line.isDebt) " (دين)" else ""
                 boldPaint.textAlign = Paint.Align.LEFT
-                canvas.drawText("$packLabel ${line.name}", 16f, y, boldPaint)
+                canvas.drawText("$packLabel ${line.name}$debtTag", 16f, y, boldPaint)
 
                 regularPaint.textAlign = Paint.Align.CENTER
                 canvas.drawText("${line.quantityPieces}", 170f, y, regularPaint)
@@ -3779,7 +3795,7 @@ internal fun exportAndShareInvoicePdf(
             y += 4f
             val solidSectionPaint = Paint().apply {
                 isAntiAlias = true
-                color = android.graphics.Color.rgb(15, 23, 42)
+                color = android.graphics.Color.BLACK
                 strokeWidth = 2f
                 this.style = Paint.Style.STROKE
             }

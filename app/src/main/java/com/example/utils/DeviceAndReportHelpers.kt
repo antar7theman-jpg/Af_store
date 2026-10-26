@@ -1067,6 +1067,7 @@ fun HighlightedText(
     color: Color = Color.Unspecified,
     fontWeight: FontWeight? = null,
     maxLines: Int = Int.MAX_VALUE,
+    softWrap: Boolean = true,
     overflow: TextOverflow = TextOverflow.Clip
 ) {
     Text(
@@ -1076,6 +1077,7 @@ fun HighlightedText(
         color = color,
         fontWeight = fontWeight,
         maxLines = maxLines,
+        softWrap = softWrap,
         overflow = overflow
     )
 }

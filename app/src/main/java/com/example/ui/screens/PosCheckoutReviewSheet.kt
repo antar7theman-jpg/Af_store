@@ -115,6 +115,7 @@ fun PosCheckoutReviewSheet(
     var itemForDiscountDialog by remember { mutableStateOf<CartItem?>(null) }
     var itemForTaxDialog by remember { mutableStateOf<CartItem?>(null) }
     var itemForPriceDialog by remember { mutableStateOf<CartItem?>(null) }
+    var itemForDebtDialog by remember { mutableStateOf<CartItem?>(null) }
     var showTemplatePreviewDialog by remember { mutableStateOf(false) }
     var showHeaderEditorDialog by remember { mutableStateOf(false) }
     var itemForImagePreview by remember { mutableStateOf<CartItem?>(null) }
@@ -126,7 +127,7 @@ fun PosCheckoutReviewSheet(
     }
 
     val isAllCredit = paymentMethod == "DEBT"
-    val hasAnyItemDebt = cartItems.any { it.isItemDebt }
+    val hasAnyItemDebt = cartItems.any { it.hasAnyDebt }
     val totalUnitsCount = remember(cartItems) { cartItems.sumOf { it.effectiveUnitsDeducted } }
     val subtotal = remember(cartItems) { cartItems.sumOf { it.lineSubtotal } }
     val invoiceDiscountAmount = remember(subtotal, isInvoiceDiscountPercent, invoiceDiscountValue) {
@@ -154,7 +155,16 @@ fun PosCheckoutReviewSheet(
             netTotal
         } else {
             val ratio = if (subtotal > 0.0) netTotal / subtotal else 1.0
-            cartItems.filter { it.isItemDebt }.sumOf { it.lineSubtotal * ratio }
+            cartItems.sumOf { item ->
+                val itemDebt = if (item.customDebtAmount != null) {
+                    item.customDebtAmount.coerceIn(0.0, item.lineSubtotal)
+                } else if (item.isItemDebt) {
+                    item.lineSubtotal
+                } else {
+                    0.0
+                }
+                itemDebt * ratio
+            }
         }
     }
 
@@ -197,7 +207,7 @@ fun PosCheckoutReviewSheet(
                 finalLineTotal = item.lineSubtotal,
                 unitsPerCarton = item.unitsPerCartonSafe,
                 barcode = item.product.barcode.ifBlank { "622100100${idx + 1}" },
-                isDebt = wholeCartDebt || item.isItemDebt
+                isDebt = wholeCartDebt || item.hasAnyDebt
             )
         }
     }
@@ -969,7 +979,7 @@ fun PosCheckoutReviewSheet(
                                         },
                                         onDiscountClick = { itemForDiscountDialog = item },
                                         onTaxClick = { itemForTaxDialog = item },
-                                        onToggleDebt = { viewModel.toggleCartItemDebt(item.product.id) },
+                                        onToggleDebt = { itemForDebtDialog = item },
                                         onEditPriceClick = { itemForPriceDialog = item },
                                         onProductNameClick = { itemForImagePreview = item }
                                     )
@@ -2292,6 +2302,248 @@ fun PosCheckoutReviewSheet(
         )
     }
 
+    // Per-Item Debt Allocation Modal (تخصيص جزء من مبلغ السلعة كدين)
+    itemForDebtDialog?.let { currentItem ->
+        val lineTotal = currentItem.lineSubtotal
+        var debtMode by remember(currentItem) {
+            mutableStateOf(
+                when {
+                    currentItem.customDebtAmount != null && currentItem.customDebtAmount > 0.0 -> "PARTIAL"
+                    currentItem.isItemDebt -> "FULL"
+                    else -> "PARTIAL"
+                }
+            )
+        }
+        var debtAmountInput by remember(currentItem) {
+            val initialAmount = currentItem.customDebtAmount
+                ?: if (currentItem.isItemDebt) lineTotal else (lineTotal / 2.0)
+            mutableStateOf(
+                if (initialAmount % 1.0 == 0.0) {
+                    initialAmount.toInt().toString()
+                } else {
+                    String.format(Locale.US, "%.2f", initialAmount)
+                }
+            )
+        }
+
+        AlertDialog(
+            onDismissRequest = { itemForDebtDialog = null },
+            title = {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(
+                        Icons.Default.AssignmentLate,
+                        contentDescription = null,
+                        tint = debtAccentColor,
+                        modifier = Modifier.size(24.dp)
+                    )
+                    Text(
+                        text = "تخصيص دين السلعة",
+                        fontWeight = FontWeight.ExtraBold,
+                        style = MaterialTheme.typography.titleMedium
+                    )
+                }
+            },
+            text = {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    // Item summary box
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = colorScheme.surfaceContainerHighest,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(modifier = Modifier.padding(10.dp)) {
+                            Text(
+                                text = currentItem.product.name,
+                                fontWeight = FontWeight.Bold,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = colorScheme.onSurface
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "إجمالي السلعة:",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = colorScheme.onSurfaceVariant
+                                )
+                                Text(
+                                    text = "${String.format(Locale.US, "%.2f", lineTotal)} $currency",
+                                    fontWeight = FontWeight.ExtraBold,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = colorScheme.primary
+                                )
+                            }
+                        }
+                    }
+
+                    // Mode Selection Chips
+                    Text(
+                        text = "طريقة تسجيل الدين للسلعة:",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        FilterChip(
+                            selected = debtMode == "NONE",
+                            onClick = { debtMode = "NONE" },
+                            label = { Text("نقداً بالكامل", fontSize = 11.sp, fontWeight = FontWeight.Bold) },
+                            modifier = Modifier.weight(1f)
+                        )
+                        FilterChip(
+                            selected = debtMode == "PARTIAL",
+                            onClick = { debtMode = "PARTIAL" },
+                            label = { Text("دين جزئي", fontSize = 11.sp, fontWeight = FontWeight.Bold) },
+                            modifier = Modifier.weight(1f)
+                        )
+                        FilterChip(
+                            selected = debtMode == "FULL",
+                            onClick = { debtMode = "FULL" },
+                            label = { Text("دين كامل", fontSize = 11.sp, fontWeight = FontWeight.Bold) },
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+
+                    if (debtMode == "PARTIAL") {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedTextField(
+                                value = debtAmountInput,
+                                onValueChange = { debtAmountInput = it },
+                                label = { Text("مبلغ الدين المخصص للسلعة ($currency)") },
+                                placeholder = { Text("أدخل مبلغ الدين") },
+                                trailingIcon = { Text(currency, fontWeight = FontWeight.Bold, modifier = Modifier.padding(end = 8.dp)) },
+                                singleLine = true,
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                modifier = Modifier.fillMaxWidth()
+                            )
+
+                            // Quick preset chips (25%, 50%, 75%)
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                listOf(0.25 to "25%", 0.50 to "50%", 0.75 to "75%").forEach { (factor, label) ->
+                                    val calcVal = lineTotal * factor
+                                    val formattedVal = if (calcVal % 1.0 == 0.0) calcVal.toInt().toString() else String.format(Locale.US, "%.2f", calcVal)
+                                    Surface(
+                                        onClick = { debtAmountInput = formattedVal },
+                                        shape = RoundedCornerShape(8.dp),
+                                        color = colorScheme.surfaceContainerLow,
+                                        border = BorderStroke(1.dp, colorScheme.outlineVariant),
+                                        modifier = Modifier.weight(1f).height(32.dp)
+                                    ) {
+                                        Box(contentAlignment = Alignment.Center) {
+                                            Text(
+                                                text = "$label (${if (calcVal % 1.0 == 0.0) calcVal.toInt().toString() else String.format(Locale.US, "%.0f", calcVal)})",
+                                                fontSize = 10.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = colorScheme.primary
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Dynamic breakdown
+                            val parsedDebt = (debtAmountInput.toDoubleOrNull() ?: 0.0).coerceIn(0.0, lineTotal)
+                            val remainingCash = (lineTotal - parsedDebt).coerceAtLeast(0.0)
+
+                            Surface(
+                                shape = RoundedCornerShape(10.dp),
+                                color = debtContainerColor,
+                                border = BorderStroke(1.dp, debtBorderColor),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(10.dp),
+                                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Text("💳 المبلغ المسجل كدين:", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = debtAccentColor)
+                                        Text("${String.format(Locale.US, "%.2f", parsedDebt)} $currency", fontSize = 12.sp, fontWeight = FontWeight.ExtraBold, color = debtAccentColor)
+                                    }
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Text("💵 المبلغ المدفوع نقداً:", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = colorScheme.onSurface)
+                                        Text("${String.format(Locale.US, "%.2f", remainingCash)} $currency", fontSize = 12.sp, fontWeight = FontWeight.ExtraBold, color = Color(0xFF10B981))
+                                    }
+                                }
+                            }
+                        }
+                    } else if (debtMode == "FULL") {
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = debtContainerColor,
+                            border = BorderStroke(1.dp, debtBorderColor),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(
+                                text = "سيتم تسجيل إجمالي مبلغ السلعة بالكامل (${String.format(Locale.US, "%.2f", lineTotal)} $currency) كدين على العميل.",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = debtAccentColor,
+                                modifier = Modifier.padding(10.dp)
+                            )
+                        }
+                    } else {
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = Color(0xFF10B981).copy(alpha = 0.12f),
+                            border = BorderStroke(1.dp, Color(0xFF10B981).copy(alpha = 0.4f)),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(
+                                text = "سيتم دفع إجمالي مبلغ السلعة (${String.format(Locale.US, "%.2f", lineTotal)} $currency) نقداً دون تسجيل أي دين.",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF047857),
+                                modifier = Modifier.padding(10.dp)
+                            )
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        when (debtMode) {
+                            "NONE" -> viewModel.setCartItemDebt(currentItem.product.id, isDebt = false, customAmount = null)
+                            "FULL" -> viewModel.setCartItemDebt(currentItem.product.id, isDebt = true, customAmount = null)
+                            "PARTIAL" -> {
+                                val entered = debtAmountInput.toDoubleOrNull() ?: 0.0
+                                viewModel.setCartItemDebt(currentItem.product.id, isDebt = true, customAmount = entered)
+                            }
+                        }
+                        itemForDebtDialog = null
+                    }
+                ) {
+                    Text("حفظ وتطبيق")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { itemForDebtDialog = null }) {
+                    Text("إلغاء")
+                }
+            }
+        )
+    }
+
     if (showTemplatePreviewDialog) {
         InvoiceTemplatePreviewDialog(
             viewModel = viewModel,
@@ -2419,11 +2671,11 @@ private fun CheckoutReviewItemCard(
             .fillMaxWidth()
             .testTag("checkout_item_card_${item.product.id}"),
         shape = RoundedCornerShape(18.dp),
-        color = if (item.isItemDebt) debtContainerColor else colorScheme.surface,
+        color = if (item.hasAnyDebt) debtContainerColor else colorScheme.surface,
         shadowElevation = 3.5.dp,
         border = BorderStroke(
-            width = if (item.isItemDebt) 1.8.dp else 1.4.dp,
-            color = if (item.isItemDebt) debtBorderColor else Color(0xFFCBD5E1)
+            width = if (item.hasAnyDebt) 1.8.dp else 1.4.dp,
+            color = if (item.hasAnyDebt) debtBorderColor else Color(0xFFCBD5E1)
         )
     ) {
         Row(
@@ -2436,7 +2688,7 @@ private fun CheckoutReviewItemCard(
                 modifier = Modifier
                     .width(6.dp)
                     .fillMaxHeight()
-                    .background(if (item.isItemDebt) debtAccentColor else colorScheme.primary)
+                    .background(if (item.hasAnyDebt) debtAccentColor else colorScheme.primary)
             )
 
             Column(
@@ -2491,7 +2743,8 @@ private fun CheckoutReviewItemCard(
                     ) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            modifier = Modifier.padding(bottom = 3.dp)
                         ) {
                             Surface(
                                 shape = CircleShape,
@@ -2502,21 +2755,54 @@ private fun CheckoutReviewItemCard(
                                     style = MaterialTheme.typography.labelSmall,
                                     fontWeight = FontWeight.ExtraBold,
                                     color = colorScheme.onPrimaryContainer,
-                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                                    modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
                                 )
                             }
-                            Text(
-                                text = item.product.name,
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.ExtraBold,
-                                color = colorScheme.onSurface,
-                                maxLines = 2,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier
-                                    .clickable { onProductNameClick() }
-                                    .testTag("checkout_item_name_${item.product.id}")
-                            )
+                            if (item.customDebtAmount != null && item.customDebtAmount > 0.0) {
+                                Surface(
+                                    shape = RoundedCornerShape(6.dp),
+                                    color = debtContainerColor,
+                                    border = BorderStroke(1.dp, debtBorderColor)
+                                ) {
+                                    Text(
+                                        text = "دين جزئي: ${String.format(Locale.US, "%.0f", item.customDebtAmount)} $currency",
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = debtAccentColor,
+                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                    )
+                                }
+                            } else if (item.isItemDebt) {
+                                Surface(
+                                    shape = RoundedCornerShape(6.dp),
+                                    color = debtContainerColor,
+                                    border = BorderStroke(1.dp, debtBorderColor)
+                                ) {
+                                    Text(
+                                        text = "دين كامل",
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = debtAccentColor,
+                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                    )
+                                }
+                            }
                         }
+
+                        Text(
+                            text = item.product.name,
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = colorScheme.onSurface,
+                            maxLines = Int.MAX_VALUE,
+                            softWrap = true,
+                            overflow = TextOverflow.Clip,
+                            lineHeight = 20.sp,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { onProductNameClick() }
+                                .testTag("checkout_item_name_${item.product.id}")
+                        )
 
                         Spacer(modifier = Modifier.height(3.dp))
                         Text(
@@ -2600,6 +2886,29 @@ private fun CheckoutReviewItemCard(
                 )
             }
 
+            if (item.customDebtAmount != null && item.customDebtAmount > 0.0) {
+                Spacer(modifier = Modifier.height(5.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.Start,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = debtContainerColor,
+                        border = BorderStroke(1.dp, debtBorderColor)
+                    ) {
+                        Text(
+                            text = "💳 دين: ${String.format(Locale.US, "%.2f", item.customDebtAmount)} $currency • 💵 نقداً: ${String.format(Locale.US, "%.2f", item.remainingCashAmount)} $currency",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = debtAccentColor,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                        )
+                    }
+                }
+            }
+
             Spacer(modifier = Modifier.height(10.dp))
 
             // 4 Per-Item Action Chips: (تعديل السعر) | (+ دين) | (+ TVA) | (+ خصم)
@@ -2667,10 +2976,10 @@ private fun CheckoutReviewItemCard(
                 Surface(
                     onClick = onToggleDebt,
                     shape = RoundedCornerShape(10.dp),
-                    color = if (item.isItemDebt) debtContainerColor else colorScheme.surface,
+                    color = if (item.hasAnyDebt) debtContainerColor else colorScheme.surface,
                     border = BorderStroke(
                         1.dp,
-                        if (item.isItemDebt) debtBorderColor else colorScheme.outlineVariant
+                        if (item.hasAnyDebt) debtBorderColor else colorScheme.outlineVariant
                     ),
                     modifier = Modifier.height(34.dp)
                 ) {
@@ -2682,14 +2991,19 @@ private fun CheckoutReviewItemCard(
                         Icon(
                             Icons.Default.AssignmentLate,
                             contentDescription = null,
-                            tint = debtAccentColor,
+                            tint = if (item.hasAnyDebt) debtAccentColor else colorScheme.onSurfaceVariant,
                             modifier = Modifier.size(15.dp)
                         )
                         Text(
-                            text = if (item.isItemDebt) "مسجل دين" else "+ دين",
+                            text = when {
+                                item.customDebtAmount != null && item.customDebtAmount > 0.0 ->
+                                    "دين جزئي: ${String.format(Locale.US, "%.0f", item.customDebtAmount)}"
+                                item.isItemDebt -> "دين كامل"
+                                else -> "+ دين"
+                            },
                             fontSize = 12.sp,
                             fontWeight = FontWeight.ExtraBold,
-                            color = debtAccentColor
+                            color = if (item.hasAnyDebt) debtAccentColor else colorScheme.onSurfaceVariant
                         )
                     }
                 }
@@ -2920,7 +3234,12 @@ private fun buildInvoiceShareText(
     sb.appendLine("👤 العميل: $customerName")
     sb.appendLine("────────────────────")
     cart.forEachIndexed { idx, item ->
-        val creditTag = if (item.isItemDebt) " [دين]" else ""
+        val creditTag = when {
+            item.customDebtAmount != null && item.customDebtAmount > 0.0 ->
+                " [دين جزئي: ${String.format(Locale.US, "%.2f", item.customDebtAmount)} $currency]"
+            item.isItemDebt -> " [دين كامل]"
+            else -> ""
+        }
         sb.appendLine("${idx + 1}. ${item.product.name}$creditTag")
         sb.appendLine("   ${item.effectiveUnitsDeducted} × ${String.format(Locale.US, "%.2f", item.customUnitPrice)} = ${String.format(Locale.US, "%.2f", item.lineSubtotal)} $currency")
     }

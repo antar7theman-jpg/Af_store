@@ -77,7 +77,8 @@ data class CartItem(
     val itemDiscountValue: Double = 0.0,
     val hasItemTva: Boolean = false,
     val itemTvaPercent: Double = 19.0,
-    val isItemDebt: Boolean = false
+    val isItemDebt: Boolean = false,
+    val customDebtAmount: Double? = null
 ) {
     val unitsPerCartonSafe: Int
         get() = product.unitsPerCarton.coerceAtLeast(1)
@@ -121,6 +122,19 @@ data class CartItem(
 
     val lineSubtotal: Double
         get() = subtotalAfterItemDiscount + itemTvaAmount
+
+    val hasAnyDebt: Boolean
+        get() = isItemDebt || (customDebtAmount != null && customDebtAmount > 0.0)
+
+    val effectiveDebtAmount: Double
+        get() = when {
+            customDebtAmount != null -> customDebtAmount.coerceIn(0.0, lineSubtotal)
+            isItemDebt -> lineSubtotal
+            else -> 0.0
+        }
+
+    val remainingCashAmount: Double
+        get() = (lineSubtotal - effectiveDebtAmount).coerceAtLeast(0.0)
 }
 
 class AntarSalesViewModel(
@@ -320,6 +334,9 @@ class AntarSalesViewModel(
     // POS Cart & Checkout Review State
     private val _cartItems = MutableStateFlow<List<CartItem>>(emptyList())
     val cartItems: StateFlow<List<CartItem>> = _cartItems.asStateFlow()
+
+    private val _lastAddedCartProductId = MutableStateFlow<Int?>(null)
+    val lastAddedCartProductId: StateFlow<Int?> = _lastAddedCartProductId.asStateFlow()
 
     private val _selectedCustomer = MutableStateFlow<Customer?>(null)
     val selectedCustomer: StateFlow<Customer?> = _selectedCustomer.asStateFlow()
@@ -1138,6 +1155,7 @@ class AntarSalesViewModel(
                 )
             )
         }
+        _lastAddedCartProductId.value = product.id
         _cartItems.value = current
         recalculateDiscountAmount()
     }
@@ -1173,6 +1191,7 @@ class AntarSalesViewModel(
                 )
             )
         }
+        _lastAddedCartProductId.value = product.id
         _cartItems.value = current
         recalculateDiscountAmount()
         showStatusMessage("تمت إضافة $safeUnits ق من ${product.name} إلى سلة المبيعات")
@@ -1209,6 +1228,9 @@ class AntarSalesViewModel(
 
     fun removeCartItem(productId: Int) {
         _cartItems.value = _cartItems.value.filterNot { it.product.id == productId }
+        if (_lastAddedCartProductId.value == productId) {
+            _lastAddedCartProductId.value = null
+        }
         if (_lastScannedPosEvent.value?.productId == productId) {
             _lastScannedPosEvent.value = null
         }
@@ -1345,17 +1367,40 @@ class AntarSalesViewModel(
         recalculateDiscountAmount()
     }
 
-    fun toggleCartItemDebt(productId: Int) {
+    fun setCartItemDebt(productId: Int, isDebt: Boolean, customAmount: Double? = null) {
         val updated = _cartItems.value.map { item ->
             if (item.product.id == productId) {
-                item.copy(isItemDebt = !item.isItemDebt)
+                if (!isDebt) {
+                    item.copy(isItemDebt = false, customDebtAmount = null)
+                } else if (customAmount != null) {
+                    val safeDebt = customAmount.coerceIn(0.0, item.lineSubtotal)
+                    if (safeDebt <= 0.0) {
+                        item.copy(isItemDebt = false, customDebtAmount = null)
+                    } else if (kotlin.math.abs(safeDebt - item.lineSubtotal) < 0.01) {
+                        item.copy(isItemDebt = true, customDebtAmount = null)
+                    } else {
+                        item.copy(isItemDebt = false, customDebtAmount = safeDebt)
+                    }
+                } else {
+                    item.copy(isItemDebt = true, customDebtAmount = null)
+                }
             } else item
         }
         _cartItems.value = updated
-        if (updated.isNotEmpty() && updated.all { it.isItemDebt }) {
+        val allFullDebt = updated.isNotEmpty() && updated.all { it.isItemDebt && it.customDebtAmount == null }
+        if (allFullDebt) {
             _paymentMethod.value = "DEBT"
-        } else if (_paymentMethod.value == "DEBT" && updated.any { !it.isItemDebt }) {
+        } else if (_paymentMethod.value == "DEBT" && updated.any { !it.isItemDebt || it.customDebtAmount != null }) {
             _paymentMethod.value = "CASH"
+        }
+    }
+
+    fun toggleCartItemDebt(productId: Int) {
+        val item = _cartItems.value.find { it.product.id == productId } ?: return
+        if (item.hasAnyDebt) {
+            setCartItemDebt(productId, isDebt = false, customAmount = null)
+        } else {
+            setCartItemDebt(productId, isDebt = true, customAmount = null)
         }
     }
 
@@ -1430,11 +1475,27 @@ class AntarSalesViewModel(
         val subtotal = calculateInvoiceSubtotal()
         val finalTotal = calculateInvoiceFinalTotal()
         val ratio = if (subtotal > 0.0) finalTotal / subtotal else 1.0
-        val hasAnyDebt = method == "DEBT" || items.any { it.isItemDebt }
+        val hasAnyDebt = method == "DEBT" || items.any { it.hasAnyDebt }
 
         val previewSales = items.mapIndexed { idx, cartItem ->
             val itemNet = cartItem.lineSubtotal * ratio
-            val itemDebt = method == "DEBT" || cartItem.isItemDebt
+            val itemDebtPortion = if (method == "DEBT") {
+                itemNet
+            } else if (cartItem.customDebtAmount != null) {
+                (cartItem.customDebtAmount.coerceIn(0.0, cartItem.lineSubtotal)) * ratio
+            } else if (cartItem.isItemDebt) {
+                itemNet
+            } else {
+                0.0
+            }
+            val isDebtLine = method == "DEBT" || cartItem.hasAnyDebt
+            val linePaymentMethod = if (method == "DEBT" || (cartItem.isItemDebt && cartItem.customDebtAmount == null)) {
+                "DEBT"
+            } else if (itemDebtPortion > 0.0) {
+                "PARTIAL_DEBT"
+            } else {
+                method
+            }
             Sale(
                 saleId = idx + 1,
                 productId = cartItem.product.id,
@@ -1444,8 +1505,8 @@ class AntarSalesViewModel(
                 saleDate = now,
                 customerId = customer?.id,
                 customerName = customer?.name ?: "عميل نقدي",
-                isDebt = itemDebt,
-                paymentMethod = if (itemDebt) "DEBT" else method
+                isDebt = isDebtLine,
+                paymentMethod = linePaymentMethod
             )
         }
 
@@ -1471,7 +1532,9 @@ class AntarSalesViewModel(
         if (cartItem.hasItemTva) {
             tags.add("TVA ${cartItem.itemTvaPercent.toInt()}%")
         }
-        if (cartItem.isItemDebt && _paymentMethod.value != "DEBT") {
+        if (cartItem.customDebtAmount != null && cartItem.customDebtAmount > 0.0 && _paymentMethod.value != "DEBT") {
+            tags.add("دين: ${String.format(Locale.US, "%.0f", cartItem.customDebtAmount)} د.ج")
+        } else if (cartItem.isItemDebt && _paymentMethod.value != "DEBT") {
             tags.add("دين")
         }
         return if (tags.isEmpty()) {
@@ -1483,6 +1546,7 @@ class AntarSalesViewModel(
 
     fun clearCart() {
         _cartItems.value = emptyList()
+        _lastAddedCartProductId.value = null
         _lastScannedPosEvent.value = null
         _discountAmount.value = 0.0
         _invoiceDiscountValue.value = 0.0
@@ -1534,9 +1598,9 @@ class AntarSalesViewModel(
     fun setPosPaymentMethod(method: String) {
         _paymentMethod.value = method
         if (method == "DEBT") {
-            _cartItems.value = _cartItems.value.map { it.copy(isItemDebt = true) }
+            _cartItems.value = _cartItems.value.map { it.copy(isItemDebt = true, customDebtAmount = null) }
         } else {
-            _cartItems.value = _cartItems.value.map { it.copy(isItemDebt = false) }
+            _cartItems.value = _cartItems.value.map { it.copy(isItemDebt = false, customDebtAmount = null) }
         }
     }
 
@@ -1836,7 +1900,7 @@ class AntarSalesViewModel(
         val customer = _selectedCustomer.value
         val method = _paymentMethod.value
         val isWholeCartDebt = method == "DEBT"
-        val hasItemDebt = items.any { it.isItemDebt }
+        val hasItemDebt = items.any { it.hasAnyDebt }
 
         if ((isWholeCartDebt || hasItemDebt) && customer == null) {
             showStatusMessage("يرجى اختيار العميل أولاً عند تسجيل فاتورة أو سلعة بالدين (آجل)")
@@ -1862,9 +1926,24 @@ class AntarSalesViewModel(
                 items.forEach { cartItem ->
                     val netLineTotal = cartItem.lineSubtotal * ratio
                     val unitsDeducted = cartItem.effectiveUnitsDeducted
-                    val isLineDebt = isWholeCartDebt || cartItem.isItemDebt
-                    if (isLineDebt) {
-                        totalDebtPortion += netLineTotal
+                    val itemDebtPortion = if (isWholeCartDebt) {
+                        netLineTotal
+                    } else if (cartItem.customDebtAmount != null) {
+                        (cartItem.customDebtAmount.coerceIn(0.0, cartItem.lineSubtotal)) * ratio
+                    } else if (cartItem.isItemDebt) {
+                        netLineTotal
+                    } else {
+                        0.0
+                    }
+                    totalDebtPortion += itemDebtPortion
+
+                    val isLineDebt = isWholeCartDebt || cartItem.hasAnyDebt
+                    val linePaymentMethod = if (isWholeCartDebt || (cartItem.isItemDebt && cartItem.customDebtAmount == null)) {
+                        "DEBT"
+                    } else if (itemDebtPortion > 0.0) {
+                        "PARTIAL_DEBT"
+                    } else {
+                        method
                     }
 
                     val sale = Sale(
@@ -1876,7 +1955,7 @@ class AntarSalesViewModel(
                         customerId = customer?.id,
                         customerName = customer?.name ?: "عميل نقدي",
                         isDebt = isLineDebt,
-                        paymentMethod = if (isLineDebt) "DEBT" else method,
+                        paymentMethod = linePaymentMethod,
                         invoiceGroupId = invoiceCode,
                         updatedAt = now,
                         syncStatus = RecordSyncState.PENDING
@@ -3057,6 +3136,7 @@ class AntarSalesViewModel(
                 )
             )
         }
+        _lastAddedCartProductId.value = product.id
         _preSaleCartItems.value = current
     }
 
@@ -3089,6 +3169,7 @@ class AntarSalesViewModel(
                 )
             )
         }
+        _lastAddedCartProductId.value = product.id
         _preSaleCartItems.value = current
     }
 
@@ -3125,6 +3206,7 @@ class AntarSalesViewModel(
 
     fun clearPreSaleCart() {
         _preSaleCartItems.value = emptyList()
+        _lastAddedCartProductId.value = null
     }
 
     fun selectPreSaleCustomer(customer: Customer?) {
