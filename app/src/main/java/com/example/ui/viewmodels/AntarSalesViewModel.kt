@@ -3433,7 +3433,8 @@ class AntarSalesViewModel(
                 finalLineTotal = sale.totalPrice,
                 unitsPerCarton = (matchedProduct?.unitsPerCarton ?: 10).coerceAtLeast(1),
                 barcode = matchedProduct?.barcode?.ifBlank { "622100100${idx + 1}" } ?: "622100100${idx + 1}",
-                isDebt = sale.isDebt
+                isDebt = sale.isDebt,
+                customDebtAmount = Regex("""دين:\s*([\d\.]+)""").find(sale.productName)?.groupValues?.get(1)?.toDoubleOrNull()
             )
         }
         val sousTotal = lines.sumOf { it.rawSubtotal }
@@ -3441,7 +3442,7 @@ class AntarSalesViewModel(
         val tvaAmt = lines.sumOf { it.itemTvaAmount }
         val netTotal = invoice.subtotal.coerceAtLeast(0.0)
         val hasDebt = lines.any { it.isDebt }
-        val hasCash = lines.any { !it.isDebt }
+        val hasCash = lines.any { !it.isDebt || it.isPartialDebt }
         val paymentAr = when {
             hasDebt && hasCash -> "دين ونقد"
             hasDebt -> "دين"
@@ -3449,11 +3450,11 @@ class AntarSalesViewModel(
         }
         val creditAmt = when {
             !hasDebt -> 0.0
-            !hasCash -> netTotal
+            !hasCash && lines.all { !it.isPartialDebt } -> netTotal
             else -> {
                 val sum = lines.sumOf { it.finalLineTotal }
                 val scale = if (sum > 0.0) netTotal / sum else 1.0
-                lines.filter { it.isDebt }.sumOf { it.finalLineTotal * scale }
+                lines.filter { it.isDebt }.sumOf { it.effectiveDebtAmount * scale }
             }
         }
         val especesAmt = (netTotal - creditAmt).coerceAtLeast(0.0)

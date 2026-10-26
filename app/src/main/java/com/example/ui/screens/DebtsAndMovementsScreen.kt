@@ -98,6 +98,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.material3.LocalTextStyle
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -578,157 +580,166 @@ fun DebtsAndMovementsScreen(viewModel: AntarSalesViewModel) {
                     .padding(horizontal = 12.dp, vertical = 10.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                // Header Top Row: Title + Action Buttons
+                // Header Row 1: Full Title and Subtitle with Icon
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        modifier = Modifier.weight(1f)
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = MaterialTheme.colorScheme.primary.copy(alpha = if (isDark) 0.18f else 0.12f),
+                        border = BorderStroke(
+                            1.dp,
+                            MaterialTheme.colorScheme.primary.copy(alpha = if (isDark) 0.5f else 0.7f)
+                        ),
+                        modifier = Modifier.size(40.dp)
                     ) {
-                        Surface(
-                            shape = RoundedCornerShape(10.dp),
-                            color = MaterialTheme.colorScheme.primary.copy(alpha = if (isDark) 0.16f else 0.12f),
-                            border = BorderStroke(
-                                1.dp,
-                                MaterialTheme.colorScheme.primary.copy(alpha = if (isDark) 0.5f else 0.7f)
-                            ),
-                            modifier = Modifier.size(36.dp)
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Icon(
-                                    imageVector = Icons.Default.AccountBalanceWallet,
-                                    contentDescription = "الديون وحركتها",
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(20.dp)
-                                )
-                            }
-                        }
-
-                        Column {
-                            Text(
-                                text = "مركز الديون وحركتها",
-                                fontWeight = FontWeight.ExtraBold,
-                                fontSize = 15.sp,
-                                color = MaterialTheme.colorScheme.onSurface,
-                                maxLines = 1
-                            )
-                            Text(
-                                text = "متابعة ديون العملاء والموردين والتحصيل",
-                                fontSize = 10.5.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = Icons.Default.AccountBalanceWallet,
+                                contentDescription = "الديون وحركتها",
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(22.dp)
                             )
                         }
                     }
 
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(5.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "مركز الديون وحركتها",
+                            fontWeight = FontWeight.Black,
+                            fontSize = 17.sp,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1
+                        )
+                        Text(
+                            text = "متابعة ديون العملاء والموردين والتحصيل",
+                            fontSize = 11.5.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+
+                // Header Row 2: Action Buttons (Add Debt, Quick Pay, PDF Reports)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    // Add New Debt Button
+                    Surface(
+                        onClick = {
+                            initialAddDebtPartyType = if (selectedSubTab == 2) "SUPPLIER" else "CUSTOMER"
+                            preselectedCustomerForAddDebt = null
+                            preselectedSupplierNameForAddDebt = ""
+                            preselectedSupplierPhoneForAddDebt = ""
+                            showAddDebtModal = true
+                        },
+                        shape = RoundedCornerShape(10.dp),
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier
+                            .weight(1.15f)
+                            .height(36.dp)
+                            .testTag("debts_add_new_debt_btn")
                     ) {
-                        // PDF Report Button
-                        Surface(
-                            onClick = { showDebtsPdfReportDialog = true },
-                            shape = RoundedCornerShape(10.dp),
-                            color = semantic.infoBlue.copy(alpha = if (isDark) 0.16f else 0.12f),
-                            border = BorderStroke(
-                                1.dp,
-                                semantic.infoBlue.copy(alpha = if (isDark) 0.5f else 0.7f)
-                            ),
+                        Row(
                             modifier = Modifier
-                                .height(34.dp)
-                                .testTag("debts_pdf_report_btn")
+                                .fillMaxSize()
+                                .padding(horizontal = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.Center
                         ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 7.dp, vertical = 6.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(3.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.PictureAsPdf,
-                                    contentDescription = "التقارير PDF",
-                                    tint = semantic.infoBlue,
-                                    modifier = Modifier.size(14.dp)
-                                )
-                                Text(
-                                    text = "التقارير PDF",
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 11.sp,
-                                    color = semantic.infoBlue
-                                )
-                            }
+                            Icon(
+                                imageVector = Icons.Default.Add,
+                                contentDescription = "إضافة دين",
+                                tint = Color.White,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = "إضافة دين",
+                                fontWeight = FontWeight.ExtraBold,
+                                fontSize = 12.sp,
+                                color = Color.White
+                            )
                         }
+                    }
 
-                        // Quick Pay Button
-                        Surface(
-                            onClick = { showQuickPayPickerDialog = true },
-                            shape = RoundedCornerShape(10.dp),
-                            color = semantic.profitGreen.copy(alpha = if (isDark) 0.16f else 0.12f),
-                            border = BorderStroke(
-                                1.dp,
-                                semantic.profitGreen.copy(alpha = if (isDark) 0.6f else 0.8f)
-                            ),
+                    // Quick Pay Button
+                    Surface(
+                        onClick = { showQuickPayPickerDialog = true },
+                        shape = RoundedCornerShape(10.dp),
+                        color = semantic.profitGreen.copy(alpha = if (isDark) 0.16f else 0.12f),
+                        border = BorderStroke(
+                            1.dp,
+                            semantic.profitGreen.copy(alpha = if (isDark) 0.6f else 0.8f)
+                        ),
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(36.dp)
+                            .testTag("debts_quick_pay_btn")
+                    ) {
+                        Row(
                             modifier = Modifier
-                                .height(34.dp)
-                                .testTag("debts_quick_pay_btn")
+                                .fillMaxSize()
+                                .padding(horizontal = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.Center
                         ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(4.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Payments,
-                                    contentDescription = "تسديد دفعة",
-                                    tint = semantic.profitGreen,
-                                    modifier = Modifier.size(15.dp)
-                                )
-                                Text(
-                                    text = "تسديد دفعة",
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 11.5.sp,
-                                    color = semantic.profitGreen
-                                )
-                            }
+                            Icon(
+                                imageVector = Icons.Default.Payments,
+                                contentDescription = "تسديد دفعة",
+                                tint = semantic.profitGreen,
+                                modifier = Modifier.size(15.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = "تسديد دفعة",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 11.5.sp,
+                                color = semantic.profitGreen
+                            )
                         }
+                    }
 
-                        // Add New Debt Button
-                        Surface(
-                            onClick = {
-                                initialAddDebtPartyType = if (selectedSubTab == 2) "SUPPLIER" else "CUSTOMER"
-                                preselectedCustomerForAddDebt = null
-                                preselectedSupplierNameForAddDebt = ""
-                                preselectedSupplierPhoneForAddDebt = ""
-                                showAddDebtModal = true
-                            },
-                            shape = RoundedCornerShape(10.dp),
-                            color = MaterialTheme.colorScheme.primary,
+                    // PDF Report Button
+                    Surface(
+                        onClick = { showDebtsPdfReportDialog = true },
+                        shape = RoundedCornerShape(10.dp),
+                        color = semantic.infoBlue.copy(alpha = if (isDark) 0.16f else 0.12f),
+                        border = BorderStroke(
+                            1.dp,
+                            semantic.infoBlue.copy(alpha = if (isDark) 0.5f else 0.7f)
+                        ),
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(36.dp)
+                            .testTag("debts_pdf_report_btn")
+                    ) {
+                        Row(
                             modifier = Modifier
-                                .height(34.dp)
-                                .testTag("debts_add_new_debt_btn")
+                                .fillMaxSize()
+                                .padding(horizontal = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.Center
                         ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 9.dp, vertical = 6.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(4.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Add,
-                                    contentDescription = "إضافة دين",
-                                    tint = Color.White,
-                                    modifier = Modifier.size(15.dp)
-                                )
-                                Text(
-                                    text = "إضافة دين",
-                                    fontWeight = FontWeight.ExtraBold,
-                                    fontSize = 11.5.sp,
-                                    color = Color.White
-                                )
-                            }
+                            Icon(
+                                imageVector = Icons.Default.PictureAsPdf,
+                                contentDescription = "التقارير PDF",
+                                tint = semantic.infoBlue,
+                                modifier = Modifier.size(15.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = "التقارير PDF",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 11.5.sp,
+                                color = semantic.infoBlue
+                            )
                         }
                     }
                 }
@@ -961,15 +972,16 @@ fun DebtsAndMovementsScreen(viewModel: AntarSalesViewModel) {
                         placeholder = {
                             Text(
                                 text = "ابحث بالاسم، الهاتف، أو البيان...",
-                                fontSize = 11.5.sp
+                                fontSize = 12.sp
                             )
                         },
+                        textStyle = LocalTextStyle.current.copy(fontSize = 12.5.sp),
                         leadingIcon = {
                             Icon(
                                 imageVector = Icons.Default.Search,
                                 contentDescription = "بحث",
                                 tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(17.dp)
+                                modifier = Modifier.size(18.dp)
                             )
                         },
                         trailingIcon = if (searchQuery.isNotEmpty()) {
@@ -988,7 +1000,7 @@ fun DebtsAndMovementsScreen(viewModel: AntarSalesViewModel) {
                         ),
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(44.dp)
+                            .heightIn(min = 48.dp)
                             .testTag("debts_search_input")
                     )
                 }

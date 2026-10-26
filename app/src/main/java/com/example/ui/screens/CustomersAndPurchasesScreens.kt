@@ -66,10 +66,13 @@ import androidx.compose.material.icons.filled.Payments
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PersonAdd
 import androidx.compose.material.icons.filled.Phone
+import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.Print
 import androidx.compose.material.icons.filled.QrCode2
+import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.Receipt
 import androidx.compose.material.icons.filled.ReceiptLong
+import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material.icons.filled.Replay
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Share
@@ -211,6 +214,7 @@ fun InvoicesArchiveScreen(viewModel: AntarSalesViewModel) {
     val invoices by viewModel.archivedInvoices.collectAsState()
     val currencySymbol by viewModel.currencySymbol.collectAsState()
     val context = androidx.compose.ui.platform.LocalContext.current
+    val isDark = isSystemInDarkTheme()
     var previewInvoice by remember { mutableStateOf<ArchivedInvoice?>(null) }
     var fulfillingInvoice by remember { mutableStateOf<ArchivedInvoice?>(null) }
     var paymentFilter by rememberSaveable { mutableStateOf("ALL") } // ALL, CASH, DEBT
@@ -308,56 +312,126 @@ fun InvoicesArchiveScreen(viewModel: AntarSalesViewModel) {
                 modifier = Modifier.padding(12.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
+                // Header Row 1: Full Title and Subtitle with Icon (100% width)
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        modifier = Modifier.weight(1f)
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = if (semantic.isDark) 0.5f else 0.7f),
+                        border = BorderStroke(
+                            1.dp,
+                            MaterialTheme.colorScheme.primary.copy(alpha = if (semantic.isDark) 0.4f else 0.6f)
+                        ),
+                        modifier = Modifier.size(40.dp)
                     ) {
-                        Surface(
-                            shape = CircleShape,
-                            color = MaterialTheme.colorScheme.primaryContainer
-                        ) {
+                        Box(contentAlignment = Alignment.Center) {
                             Icon(
                                 Icons.Default.ReceiptLong,
-                                contentDescription = null,
+                                contentDescription = "أرشيف الفواتير",
                                 tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.padding(6.dp).size(20.dp)
-                            )
-                        }
-                        Column {
-                            Text(
-                                text = "أرشيف الفواتير والمبيعات",
-                                fontWeight = FontWeight.ExtraBold,
-                                fontSize = 15.5.sp
-                            )
-                            Text(
-                                text = "محفوظة محلياً في Room • جاهزة للمعاينة والطباعة والمرتجعات",
-                                fontSize = 10.5.sp,
-                                color = Color(0xFF059669),
-                                fontWeight = FontWeight.SemiBold
+                                modifier = Modifier.size(22.dp)
                             )
                         }
                     }
 
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "أرشيف الفواتير والمبيعات",
+                            fontWeight = FontWeight.Black,
+                            fontSize = 17.sp,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1
+                        )
+                        Text(
+                            text = "محفوظة محلياً في Room • جاهزة للمعاينة والطباعة والمرتجعات",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = Color(0xFF059669),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+
+                // Header Row 2: Action Buttons (Scan QR + Reports PDF)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Surface(
+                        onClick = { showQrScannerDialog = true },
+                        shape = RoundedCornerShape(10.dp),
+                        color = MaterialTheme.colorScheme.primary.copy(alpha = if (semantic.isDark) 0.16f else 0.12f),
+                        border = BorderStroke(
+                            1.dp,
+                            MaterialTheme.colorScheme.primary.copy(alpha = if (semantic.isDark) 0.5f else 0.7f)
+                        ),
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(36.dp)
+                            .testTag("scan_invoice_qr_btn")
                     ) {
-                        UniversalReportHeaderButton(
-                            title = "مسح QR",
-                            tag = "scan_invoice_qr_btn",
-                            onClick = { showQrScannerDialog = true }
-                        )
-                        UniversalReportHeaderButton(
-                            title = "التقارير PDF",
-                            tag = "invoices_pdf_report_btn",
-                            onClick = { showInvoicesPdfReportDialog = true }
-                        )
+                        Row(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(horizontal = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.QrCode2,
+                                contentDescription = "مسح QR",
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(5.dp))
+                            Text(
+                                text = "مسح QR",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
+
+                    Surface(
+                        onClick = { showInvoicesPdfReportDialog = true },
+                        shape = RoundedCornerShape(10.dp),
+                        color = Color(0xFF0284C7).copy(alpha = if (semantic.isDark) 0.16f else 0.10f),
+                        border = BorderStroke(
+                            1.dp,
+                            Color(0xFF0284C7).copy(alpha = if (semantic.isDark) 0.5f else 0.7f)
+                        ),
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(36.dp)
+                            .testTag("invoices_pdf_report_btn")
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(horizontal = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.PictureAsPdf,
+                                contentDescription = "التقارير PDF",
+                                tint = Color(0xFF0284C7),
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(5.dp))
+                            Text(
+                                text = "التقارير PDF",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 12.sp,
+                                color = Color(0xFF0284C7)
+                            )
+                        }
                     }
                 }
 
@@ -416,6 +490,7 @@ fun InvoicesArchiveScreen(viewModel: AntarSalesViewModel) {
             value = searchQuery,
             onValueChange = { searchQuery = it },
             placeholder = { Text("ابحث برقم الفاتورة أو اسم العميل...", fontSize = 12.5.sp) },
+            textStyle = LocalTextStyle.current.copy(fontSize = 12.5.sp),
             leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(20.dp), tint = MaterialTheme.colorScheme.primary) },
             trailingIcon = {
                 if (searchQuery.isNotBlank()) {
@@ -428,6 +503,7 @@ fun InvoicesArchiveScreen(viewModel: AntarSalesViewModel) {
             shape = RoundedCornerShape(12.dp),
             modifier = Modifier
                 .fillMaxWidth()
+                .heightIn(min = 48.dp)
                 .testTag("invoices_search_input")
         )
 
@@ -1630,85 +1706,118 @@ fun PurchaseInvoicesScreen(viewModel: AntarSalesViewModel) {
                     .padding(14.dp),
                 verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
-                // Top Header Row: Left Action Buttons + Center/Right Title & Subtitle + Right Icon Box
+                // Header Row 1: Full Title and Subtitle with Icon (100% width)
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    // Left action buttons: Add + PDF Report
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = softBlueBg,
+                        border = BorderStroke(1.dp, primaryBlue.copy(alpha = 0.55f)),
+                        modifier = Modifier.size(40.dp)
                     ) {
-                        Surface(
-                            onClick = { showCreateModal = true },
-                            shape = RoundedCornerShape(14.dp),
-                            color = primaryBlue,
-                            modifier = Modifier
-                                .size(48.dp)
-                                .testTag("add_purchase_invoice_fab")
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Icon(
-                                    imageVector = Icons.Default.AddShoppingCart,
-                                    contentDescription = "فاتورة شراء جديدة",
-                                    tint = Color.White,
-                                    modifier = Modifier.size(24.dp)
-                                )
-                            }
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = Icons.Default.AddShoppingCart,
+                                contentDescription = "فواتير الشراء",
+                                tint = primaryBlue,
+                                modifier = Modifier.size(22.dp)
+                            )
                         }
-
-                        UniversalReportHeaderButton(
-                            title = "التقارير PDF",
-                            tag = "purchases_pdf_report_btn",
-                            onClick = { showPurchasesPdfReportDialog = true }
-                        )
                     }
 
-                    // Title & Subtitle + Right Icon Box
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                        modifier = Modifier.weight(1f).padding(start = 10.dp)
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "فواتير الشراء والتوريد",
+                            fontWeight = FontWeight.Black,
+                            fontSize = 17.sp,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1
+                        )
+                        Text(
+                            text = "تسجيل مشتريات وسلع جديدة ومتابعة ديون الموردين",
+                            fontSize = 11.5.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+
+                // Header Row 2: Action Buttons (Add Purchase Invoice + PDF Report)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Surface(
+                        onClick = { showCreateModal = true },
+                        shape = RoundedCornerShape(10.dp),
+                        color = primaryBlue,
+                        modifier = Modifier
+                            .weight(1.3f)
+                            .height(36.dp)
+                            .testTag("add_purchase_invoice_fab")
                     ) {
-                        Column(
-                            modifier = Modifier.weight(1f),
-                            horizontalAlignment = Alignment.End
+                        Row(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(horizontal = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.Center
                         ) {
-                            Text(
-                                text = "فواتير الشراء والتوريد",
-                                fontWeight = FontWeight.ExtraBold,
-                                fontSize = 18.sp,
-                                color = MaterialTheme.colorScheme.onSurface,
-                                textAlign = TextAlign.End,
-                                modifier = Modifier.fillMaxWidth()
+                            Icon(
+                                imageVector = Icons.Default.AddShoppingCart,
+                                contentDescription = "تسجيل فاتورة شراء",
+                                tint = Color.White,
+                                modifier = Modifier.size(16.dp)
                             )
+                            Spacer(modifier = Modifier.width(5.dp))
                             Text(
-                                text = "تسجيل مشتريات وسلع جديدة ومتابعة ديون الموردين",
-                                fontSize = 11.5.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                textAlign = TextAlign.End,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.fillMaxWidth()
+                                text = "تسجيل فاتورة شراء",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 12.sp,
+                                color = Color.White
                             )
                         }
+                    }
 
-                        Surface(
-                            shape = RoundedCornerShape(14.dp),
-                            color = softBlueBg,
-                            border = BorderStroke(1.dp, primaryBlue.copy(alpha = 0.55f)),
-                            modifier = Modifier.size(48.dp)
+                    Surface(
+                        onClick = { showPurchasesPdfReportDialog = true },
+                        shape = RoundedCornerShape(10.dp),
+                        color = Color(0xFF0284C7).copy(alpha = if (isDark) 0.16f else 0.10f),
+                        border = BorderStroke(
+                            1.dp,
+                            Color(0xFF0284C7).copy(alpha = if (isDark) 0.5f else 0.7f)
+                        ),
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(36.dp)
+                            .testTag("purchases_pdf_report_btn")
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(horizontal = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.Center
                         ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Icon(
-                                    imageVector = Icons.Default.AddShoppingCart,
-                                    contentDescription = null,
-                                    tint = primaryBlue,
-                                    modifier = Modifier.size(24.dp)
-                                )
-                            }
+                            Icon(
+                                imageVector = Icons.Default.PictureAsPdf,
+                                contentDescription = "التقارير PDF",
+                                tint = Color(0xFF0284C7),
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(5.dp))
+                            Text(
+                                text = "التقارير PDF",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 12.sp,
+                                color = Color(0xFF0284C7)
+                            )
                         }
                     }
                 }
@@ -1896,7 +2005,7 @@ fun PurchaseInvoicesScreen(viewModel: AntarSalesViewModel) {
             placeholder = {
                 Text(
                     text = "ابحث برقم الفاتورة، اسم المورد، أو اسم السلعة...",
-                    fontSize = 13.5.sp,
+                    fontSize = 12.5.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     textAlign = TextAlign.End,
                     modifier = Modifier.fillMaxWidth()
@@ -1919,7 +2028,7 @@ fun PurchaseInvoicesScreen(viewModel: AntarSalesViewModel) {
             },
             textStyle = TextStyle(
                 textAlign = TextAlign.End,
-                fontSize = 14.sp
+                fontSize = 13.sp
             ),
             singleLine = true,
             shape = RoundedCornerShape(18.dp),
@@ -1930,6 +2039,7 @@ fun PurchaseInvoicesScreen(viewModel: AntarSalesViewModel) {
             ),
             modifier = Modifier
                 .fillMaxWidth()
+                .heightIn(min = 48.dp)
                 .testTag("purchase_invoices_search_input")
         )
 

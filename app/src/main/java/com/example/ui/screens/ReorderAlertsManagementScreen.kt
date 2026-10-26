@@ -16,6 +16,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -46,6 +47,7 @@ import androidx.compose.material.icons.filled.Inventory2
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.NotificationsOff
+import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.SelectAll
 import androidx.compose.material.icons.filled.Share
@@ -64,6 +66,7 @@ import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -413,6 +416,7 @@ fun ReorderAlertsManagementScreen(
 ) {
     val context = LocalContext.current
     val semantic = LocalAFStoreSemanticColors.current
+    val isDark = isSystemInDarkTheme()
 
     val allProducts by viewModel.products.collectAsState()
     val lowStockProducts by viewModel.lowStockProducts.collectAsState()
@@ -520,79 +524,85 @@ fun ReorderAlertsManagementScreen(
             .testTag("reorder_alerts_management_screen"),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        // 1. Header & Settings Toggle Row
+        // Header Row 1: Full Title and Subtitle with Icon (100% width)
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier.weight(1f)
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = Color(0xFFEF4444).copy(alpha = 0.14f),
+                border = BorderStroke(1.dp, Color(0xFFEF4444).copy(alpha = 0.55f)),
+                modifier = Modifier.size(40.dp)
             ) {
-                Surface(
-                    shape = RoundedCornerShape(12.dp),
-                    color = Color(0xFFEF4444).copy(alpha = 0.14f),
-                    border = BorderStroke(1.dp, Color(0xFFEF4444).copy(alpha = 0.55f)),
-                    modifier = Modifier.size(38.dp)
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Icon(
-                            imageVector = Icons.Default.NotificationsActive,
-                            contentDescription = null,
-                            tint = Color(0xFFEF4444),
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
-                }
-                Column {
-                    Text(
-                        text = "إدارة تنبيهات المخزون وإعادة الطلب",
-                        fontWeight = FontWeight.ExtraBold,
-                        fontSize = 15.5.sp,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                    Text(
-                        text = "مراقبة النواقص الفورية وإصدار طلبيات الشراء للموردين",
-                        fontSize = 11.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        imageVector = Icons.Default.NotificationsActive,
+                        contentDescription = "تنبيهات المخزون",
+                        tint = Color(0xFFEF4444),
+                        modifier = Modifier.size(22.dp)
                     )
                 }
             }
-
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                UniversalReportHeaderButton(
-                    title = "التقارير PDF",
-                    tag = "reorder_pdf_report_btn",
-                    onClick = { showReorderPdfReportDialog = true }
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "إدارة تنبيهات المخزون وإعادة الطلب",
+                    fontWeight = FontWeight.Black,
+                    fontSize = 17.sp,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1
                 )
+                Text(
+                    text = "مراقبة النواقص الفورية وإصدار طلبيات الشراء للموردين",
+                    fontSize = 11.5.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
 
-                FilledTonalButton(
-                    onClick = { showSettingsPanel = !showSettingsPanel },
-                    shape = RoundedCornerShape(12.dp),
-                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
-                    colors = ButtonDefaults.filledTonalButtonColors(
-                        containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.8f),
-                        contentColor = MaterialTheme.colorScheme.primary
-                    ),
-                    modifier = Modifier.testTag("toggle_alert_settings_panel_btn")
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Tune,
-                        contentDescription = null,
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Spacer(modifier = Modifier.width(5.dp))
-                    Text(
-                        text = if (showSettingsPanel) "إخفاء الإعدادات" else "إعدادات التنبيه",
-                        fontSize = 11.5.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
+        // Header Row 2: Action Buttons (PDF Reports & Alert Settings)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            UniversalReportHeaderButton(
+                title = "التقارير PDF",
+                tag = "reorder_pdf_report_btn",
+                onClick = { showReorderPdfReportDialog = true },
+                modifier = Modifier
+                    .weight(1f)
+                    .height(36.dp)
+            )
+
+            FilledTonalButton(
+                onClick = { showSettingsPanel = !showSettingsPanel },
+                shape = RoundedCornerShape(12.dp),
+                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                colors = ButtonDefaults.filledTonalButtonColors(
+                    containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.8f),
+                    contentColor = MaterialTheme.colorScheme.primary
+                ),
+                modifier = Modifier
+                    .weight(1f)
+                    .height(36.dp)
+                    .testTag("toggle_alert_settings_panel_btn")
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Tune,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp)
+                )
+                Spacer(modifier = Modifier.width(5.dp))
+                Text(
+                    text = if (showSettingsPanel) "إخفاء الإعدادات" else "إعدادات التنبيه",
+                    fontSize = 11.5.sp,
+                    fontWeight = FontWeight.Bold
+                )
             }
         }
 
@@ -763,6 +773,7 @@ fun ReorderAlertsManagementScreen(
                 value = searchQuery,
                 onValueChange = { searchQuery = it },
                 placeholder = { Text("ابحث باسم السلعة أو الباركود لضبط حد التنبيه...", fontSize = 12.5.sp) },
+                textStyle = LocalTextStyle.current.copy(fontSize = 12.5.sp),
                 leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(18.dp)) },
                 trailingIcon = {
                     if (searchQuery.isNotEmpty()) {
@@ -775,6 +786,7 @@ fun ReorderAlertsManagementScreen(
                 shape = RoundedCornerShape(12.dp),
                 modifier = Modifier
                     .weight(1f)
+                    .heightIn(min = 48.dp)
                     .testTag("reorder_alerts_search_input")
             )
 

@@ -207,7 +207,8 @@ fun PosCheckoutReviewSheet(
                 finalLineTotal = item.lineSubtotal,
                 unitsPerCarton = item.unitsPerCartonSafe,
                 barcode = item.product.barcode.ifBlank { "622100100${idx + 1}" },
-                isDebt = wholeCartDebt || item.hasAnyDebt
+                isDebt = wholeCartDebt || item.hasAnyDebt,
+                customDebtAmount = if (wholeCartDebt) null else item.customDebtAmount
             )
         }
     }
@@ -223,7 +224,7 @@ fun PosCheckoutReviewSheet(
     val itemsTvaTotal = remember(previewLines) { previewLines.sumOf { it.itemTvaAmount } }
     val totalCombinedTva = itemsTvaTotal + invoiceTvaAmount
     val hasDebtItems = remember(previewLines) { previewLines.any { it.isDebt } }
-    val hasCashItems = remember(previewLines) { previewLines.any { !it.isDebt } }
+    val hasCashItems = remember(previewLines) { previewLines.any { !it.isDebt || it.isPartialDebt } }
     val paymentMethodAr = remember(hasDebtItems, hasCashItems, paymentMethod) {
         when {
             hasDebtItems && hasCashItems && paymentMethod == "TRANSFER" -> "دين وتحويل"

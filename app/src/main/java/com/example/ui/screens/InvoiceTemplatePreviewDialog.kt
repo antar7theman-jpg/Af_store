@@ -94,7 +94,8 @@ data class PreviewLineItem(
     val finalLineTotal: Double,
     val unitsPerCarton: Int,
     val barcode: String,
-    val isDebt: Boolean = false
+    val isDebt: Boolean = false,
+    val customDebtAmount: Double? = null
 ) {
     val safeUnitsPerCarton: Int
         get() = unitsPerCarton.coerceAtLeast(1)
@@ -104,6 +105,19 @@ data class PreviewLineItem(
 
     val loosePieces: Int
         get() = quantityPieces % safeUnitsPerCarton
+
+    val isPartialDebt: Boolean
+        get() = isDebt && customDebtAmount != null && customDebtAmount > 0.0 && customDebtAmount < (finalLineTotal - 0.001)
+
+    val effectiveDebtAmount: Double
+        get() = when {
+            customDebtAmount != null && customDebtAmount > 0.0 -> customDebtAmount.coerceIn(0.0, finalLineTotal)
+            isDebt -> finalLineTotal
+            else -> 0.0
+        }
+
+    val effectiveCashAmount: Double
+        get() = (finalLineTotal - effectiveDebtAmount).coerceAtLeast(0.0)
 
     val discountPercentFormatted: String
         get() = if (itemDiscountPercent % 1.0 == 0.0) {
@@ -224,7 +238,8 @@ fun InvoiceTemplatePreviewDialog(
                     finalLineTotal = item.lineSubtotal,
                     unitsPerCarton = item.unitsPerCartonSafe,
                     barcode = item.product.barcode.ifBlank { "622100100${idx + 1}" },
-                    isDebt = wholeCartDebt || item.hasAnyDebt
+                    isDebt = wholeCartDebt || item.hasAnyDebt,
+                    customDebtAmount = if (wholeCartDebt) null else item.customDebtAmount
                 )
             }
         } else if (archivedInvoice != null) {
@@ -234,6 +249,7 @@ fun InvoiceTemplatePreviewDialog(
                 val unitPrice = matchedProduct?.price ?: (if (qty > 0) sale.totalPrice / qty else sale.totalPrice)
                 val rawSub = qty * unitPrice
                 val cleanName = sale.productName.substringBefore(" (").trim().ifBlank { sale.productName }
+                val parsedDebt = Regex("""دين:\s*([\d\.]+)""").find(sale.productName)?.groupValues?.get(1)?.toDoubleOrNull()
 
                 PreviewLineItem(
                     name = cleanName,
@@ -253,7 +269,8 @@ fun InvoiceTemplatePreviewDialog(
                     unitsPerCarton = (matchedProduct?.unitsPerCarton ?: 10).coerceAtLeast(1),
                     barcode = matchedProduct?.barcode?.ifBlank { "622100100${idx + 1}" }
                         ?: "622100100${idx + 1}",
-                    isDebt = sale.isDebt
+                    isDebt = sale.isDebt,
+                    customDebtAmount = parsedDebt
                 )
             }
         } else {
@@ -305,7 +322,7 @@ fun InvoiceTemplatePreviewDialog(
 
     // Determine Credit (debt) vs Espèces (cash) portions and payment label ("نقدا", "دين", "دين ونقد")
     val hasDebtItems = remember(previewLines) { previewLines.any { it.isDebt } }
-    val hasCashItems = remember(previewLines) { previewLines.any { !it.isDebt } }
+    val hasCashItems = remember(previewLines) { previewLines.any { !it.isDebt || it.isPartialDebt } }
 
     val paymentMethodAr = remember(hasDebtItems, hasCashItems, paymentMethod) {
         when {
@@ -320,11 +337,11 @@ fun InvoiceTemplatePreviewDialog(
     val creditAmount = remember(previewLines, hasDebtItems, hasCashItems, netTotal) {
         when {
             !hasDebtItems -> 0.0
-            !hasCashItems -> netTotal
+            !hasCashItems && previewLines.all { !it.isPartialDebt } -> netTotal
             else -> {
                 val linesSum = previewLines.sumOf { it.finalLineTotal }
                 val scale = if (linesSum > 0.0) netTotal / linesSum else 1.0
-                previewLines.filter { it.isDebt }.sumOf { it.finalLineTotal * scale }
+                previewLines.filter { it.isDebt }.sumOf { it.effectiveDebtAmount * scale }
             }
         }
     }
@@ -1767,7 +1784,12 @@ internal fun BonDeLivraisonPaperCard(
                                     color = inkBlack
                                 )
                             ) {
-                                append("(دين)")
+                                val tag = if (line.isPartialDebt) {
+                                    "(دين: ${String.format(Locale.US, "%.2f", line.effectiveDebtAmount)} $currency • نقداً: ${String.format(Locale.US, "%.2f", line.effectiveCashAmount)} $currency)"
+                                } else {
+                                    "(دين)"
+                                }
+                                append(tag)
                             }
                         }
                     }
@@ -1831,6 +1853,23 @@ internal fun BonDeLivraisonPaperCard(
                                 color = inkBlack,
                                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
                             )
+                        }
+
+                        if (line.isPartialDebt) {
+                            Spacer(modifier = Modifier.height(5.dp))
+                            Surface(
+                                shape = RoundedCornerShape(4.dp),
+                                color = Color.White,
+                                border = BorderStroke(1.2.dp, inkBlack)
+                            ) {
+                                Text(
+                                    text = "💳 دين: ${String.format(Locale.US, "%.2f", line.effectiveDebtAmount)} $currency • 💵 نقداً: ${String.format(Locale.US, "%.2f", line.effectiveCashAmount)} $currency",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = inkBlack,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                )
+                            }
                         }
 
                         Spacer(modifier = Modifier.height(6.dp))
@@ -1976,6 +2015,16 @@ internal fun BonDeLivraisonPaperCard(
                                 fontFamily = FontFamily.Monospace,
                                 fontSize = 11.5.sp,
                                 color = inkMuted,
+                                textAlign = TextAlign.Start
+                            )
+                        }
+                        if (line.isPartialDebt) {
+                            Text(
+                                text = "دين: ${String.format(Locale.US, "%.2f", line.effectiveDebtAmount)} $currency • نقداً: ${String.format(Locale.US, "%.2f", line.effectiveCashAmount)} $currency",
+                                fontFamily = FontFamily.Monospace,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 11.5.sp,
+                                color = inkBlack,
                                 textAlign = TextAlign.Start
                             )
                         }
@@ -2536,7 +2585,12 @@ private fun TemplateKReceiptContent(
                                             color = Color.Black
                                         )
                                     ) {
-                                        append("(دين)")
+                                        val tag = if (line.isPartialDebt) {
+                                            "(دين: ${String.format(Locale.US, "%.2f", line.effectiveDebtAmount)} DA • نقداً: ${String.format(Locale.US, "%.2f", line.effectiveCashAmount)} DA)"
+                                        } else {
+                                            "(دين)"
+                                        }
+                                        append(tag)
                                     }
                                 }
                             }
@@ -2589,6 +2643,17 @@ private fun TemplateKReceiptContent(
                         Text(
                             text = subNotes,
                             fontFamily = FontFamily.Monospace,
+                            fontSize = 10.sp,
+                            color = Color.Black,
+                            modifier = Modifier.padding(start = 24.dp, top = 2.dp)
+                        )
+                    }
+
+                    if (line.isPartialDebt) {
+                        Text(
+                            text = "• دين جزئي: ${String.format(Locale.US, "%.2f", line.effectiveDebtAmount)} DA • نقداً: ${String.format(Locale.US, "%.2f", line.effectiveCashAmount)} DA",
+                            fontFamily = FontFamily.Monospace,
+                            fontWeight = FontWeight.Bold,
                             fontSize = 10.sp,
                             color = Color.Black,
                             modifier = Modifier.padding(start = 24.dp, top = 2.dp)
@@ -3145,7 +3210,12 @@ private fun ThermalPosTabularReceiptContent(
                                                 color = inkBlack
                                             )
                                         ) {
-                                            append("(دين)")
+                                            val tag = if (line.isPartialDebt) {
+                                                "(دين: ${String.format(Locale.US, "%.2f", line.effectiveDebtAmount)} $currency • نقداً: ${String.format(Locale.US, "%.2f", line.effectiveCashAmount)} $currency)"
+                                            } else {
+                                                "(دين)"
+                                            }
+                                            append(tag)
                                         }
                                     }
                                 }
@@ -3179,6 +3249,21 @@ private fun ThermalPosTabularReceiptContent(
                                             fontWeight = FontWeight.SemiBold,
                                             fontSize = 10.sp,
                                             color = inkMuted,
+                                            textDirection = TextDirection.Rtl
+                                        ),
+                                        textAlign = TextAlign.Start,
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                }
+
+                                if (line.isPartialDebt) {
+                                    Text(
+                                        text = "\u200Fدين: ${String.format(Locale.US, "%.2f", line.effectiveDebtAmount)} $currency • نقداً: ${String.format(Locale.US, "%.2f", line.effectiveCashAmount)} $currency",
+                                        style = LocalTextStyle.current.copy(
+                                            fontFamily = FontFamily.Monospace,
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 9.5.sp,
+                                            color = inkBlack,
                                             textDirection = TextDirection.Rtl
                                         ),
                                         textAlign = TextAlign.Start,
@@ -3591,10 +3676,17 @@ internal fun shareInvoiceAsText(
     sb.appendLine("طريقة الدفع: $paymentMethodAr")
     sb.appendLine("--------------------------------")
     lines.forEachIndexed { idx, line ->
-        val debtLabel = if (line.isDebt) " (دين)" else ""
+        val debtLabel = if (line.isPartialDebt) {
+            " (دين: ${String.format(Locale.US, "%.2f", line.effectiveDebtAmount)} $currency • نقداً: ${String.format(Locale.US, "%.2f", line.effectiveCashAmount)} $currency)"
+        } else if (line.isDebt) {
+            " (دين)"
+        } else ""
         val packTag = formatPackagingLabel(line.quantityPieces, line.safeUnitsPerCarton)
         sb.appendLine("$packTag ${line.name}$debtLabel   ${String.format(Locale.US, "%.2f", line.subtotalAfterDiscount)} $currency")
         sb.appendLine("[ سعة العبوة: ${line.safeUnitsPerCarton} قطعة ]")
+        if (line.isPartialDebt) {
+            sb.appendLine("💳 دين: ${String.format(Locale.US, "%.2f", line.effectiveDebtAmount)} $currency • 💵 نقداً: ${String.format(Locale.US, "%.2f", line.effectiveCashAmount)} $currency")
+        }
         sb.appendLine("${line.fullCartons} كرتونة [سعة ${line.safeUnitsPerCarton} ق] × ${String.format(Locale.US, "%.2f", line.unitPrice)} $currency")
         sb.appendLine(line.barcode)
         if (line.itemDiscountAmount > 0.0) {
@@ -3772,7 +3864,11 @@ internal fun exportAndShareInvoicePdf(
 
             lines.forEachIndexed { idx, line ->
                 val packLabel = formatPackagingLabel(line.quantityPieces, line.safeUnitsPerCarton)
-                val debtTag = if (line.isDebt) " (دين)" else ""
+                val debtTag = if (line.isPartialDebt) {
+                    " (دين: ${String.format(Locale.US, "%.2f", line.effectiveDebtAmount)} DA • نقداً: ${String.format(Locale.US, "%.2f", line.effectiveCashAmount)} DA)"
+                } else if (line.isDebt) {
+                    " (دين)"
+                } else ""
                 boldPaint.textAlign = Paint.Align.LEFT
                 canvas.drawText("$packLabel ${line.name}$debtTag", 16f, y, boldPaint)
 
@@ -3786,6 +3882,11 @@ internal fun exportAndShareInvoicePdf(
                 canvas.drawText(String.format(Locale.US, "%.2f", line.finalLineTotal), 298f, y, boldPaint)
 
                 y += 14f
+                if (line.isPartialDebt) {
+                    regularPaint.textAlign = Paint.Align.LEFT
+                    canvas.drawText("• دين جزئي: ${String.format(Locale.US, "%.2f", line.effectiveDebtAmount)} DA • نقداً: ${String.format(Locale.US, "%.2f", line.effectiveCashAmount)} DA", 16f, y, regularPaint)
+                    y += 12f
+                }
                 if (idx < lines.lastIndex) {
                     canvas.drawLine(16f, y, 304f, y, itemDividerPaint)
                     y += 8f
@@ -3903,7 +4004,11 @@ internal fun exportAndShareInvoicePdf(
             val priceAlign = if (isBonLeft) Paint.Align.RIGHT else Paint.Align.LEFT
 
             lines.forEachIndexed { idx, line ->
-                val debtTag = if (line.isDebt) " (دين)" else ""
+                val debtTag = if (line.isPartialDebt) {
+                    " (دين: ${String.format(Locale.US, "%.2f", line.effectiveDebtAmount)} $currency • نقداً: ${String.format(Locale.US, "%.2f", line.effectiveCashAmount)} $currency)"
+                } else if (line.isDebt) {
+                    " (دين)"
+                } else ""
                 boldPaint.textAlign = itemAlign
                 canvas.drawText("${line.name}$debtTag", itemX, y, boldPaint)
                 boldPaint.textAlign = priceAlign
@@ -3911,6 +4016,10 @@ internal fun exportAndShareInvoicePdf(
                 y += 14f
                 regularPaint.textAlign = itemAlign
                 canvas.drawText("سعة العبوة: ${line.safeUnitsPerCarton} قطعة", itemX, y, regularPaint)
+                if (line.isPartialDebt) {
+                    y += 13f
+                    canvas.drawText("💳 دين: ${String.format(Locale.US, "%.2f", line.effectiveDebtAmount)} $currency • 💵 نقداً: ${String.format(Locale.US, "%.2f", line.effectiveCashAmount)} $currency", itemX, y, regularPaint)
+                }
                 y += 13f
                 canvas.drawText(
                     "${line.fullCartons} كرتونة [سعة ${line.safeUnitsPerCarton} ق] × ${String.format(Locale.US, "%.2f", line.unitPrice)} $currency",
