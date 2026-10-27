@@ -305,7 +305,7 @@ fun SyncDetailsModalSheet(
     val lastSyncSummary by syncManager.lastSyncSummary.collectAsState()
 
     val formattedLastSync = remember(lastSyncTimeMillis) {
-        SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date(lastSyncTimeMillis))
+        SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date(lastSyncTimeMillis))
     }
 
     ModalBottomSheet(

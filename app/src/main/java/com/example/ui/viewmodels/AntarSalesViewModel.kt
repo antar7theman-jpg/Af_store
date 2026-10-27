@@ -314,6 +314,9 @@ class AntarSalesViewModel(
     )
     val loyaltySpendPerPoint: StateFlow<Double> = _loyaltySpendPerPoint.asStateFlow()
 
+    private val _loyaltyValidityDays = MutableStateFlow(prefs.getInt("store_loyalty_validity_days", 90))
+    val loyaltyValidityDays: StateFlow<Int> = _loyaltyValidityDays.asStateFlow()
+
     private val _themeMode = MutableStateFlow(loadThemeModeFromPrefs())
     val themeMode: StateFlow<AppThemeMode> = _themeMode.asStateFlow()
 
@@ -346,6 +349,10 @@ class AntarSalesViewModel(
 
     fun toggleLoyaltyDiscount() {
         val cust = _selectedCustomer.value ?: return
+        if (isCustomerLoyaltyExpired(cust)) {
+            showStatusMessage("تعذر تطبيق الخصم: نقاط ولاء هذا العميل منتهية الصلاحية وفق شرط المدة الزمنية (${_loyaltyValidityDays.value} يوم).")
+            return
+        }
         if (cust.loyaltyPoints >= cust.loyaltyGoal) {
             _isLoyaltyDiscountApplied.value = !_isLoyaltyDiscountApplied.value
         }
@@ -1460,7 +1467,7 @@ class AntarSalesViewModel(
         val afterDiscount = (calculateInvoiceSubtotal() - calculateInvoiceDiscountAmount()).coerceAtLeast(0.0)
         val withTva = afterDiscount + calculateInvoiceTvaAmount()
         val customer = _selectedCustomer.value
-        return if (_isLoyaltyDiscountApplied.value && customer != null && customer.loyaltyPoints >= customer.loyaltyGoal) {
+        return if (_isLoyaltyDiscountApplied.value && customer != null && customer.loyaltyPoints >= customer.loyaltyGoal && !isCustomerLoyaltyExpired(customer)) {
             (withTva - customer.loyaltyRewardValue).coerceAtLeast(0.0)
         } else {
             withTva
@@ -1980,7 +1987,7 @@ class AntarSalesViewModel(
                 val updatedCustomerEntity = customer?.let {
                     val spendRatio = _loyaltySpendPerPoint.value.coerceAtLeast(1.0)
                     val pointsEarned = (totalInvoiceSum / spendRatio).toInt().coerceAtLeast(0)
-                    val isApplied = _isLoyaltyDiscountApplied.value && it.loyaltyPoints >= it.loyaltyGoal
+                    val isApplied = _isLoyaltyDiscountApplied.value && it.loyaltyPoints >= it.loyaltyGoal && !isCustomerLoyaltyExpired(it)
                     val pointsDeducted = if (isApplied) it.loyaltyGoal else 0
                     val nextPoints = (it.loyaltyPoints - pointsDeducted + pointsEarned).coerceAtLeast(0)
 
@@ -2596,32 +2603,63 @@ class AntarSalesViewModel(
         goal: Int,
         rewardValue: Double,
         spendPerPoint: Double,
+        validityDays: Int = 90,
         applyToAllCustomers: Boolean = true
     ) {
         val validGoal = goal.coerceAtLeast(1)
         val validReward = rewardValue.coerceAtLeast(0.0)
         val validSpend = spendPerPoint.coerceAtLeast(1.0)
+        val validDays = validityDays.coerceAtLeast(0)
 
         _loyaltyGoalDefault.value = validGoal
         _loyaltyRewardDefault.value = validReward
         _loyaltySpendPerPoint.value = validSpend
+        _loyaltyValidityDays.value = validDays
 
         prefs.edit()
             .putInt("store_loyalty_goal", validGoal)
             .putString("store_loyalty_reward_value", validReward.toString())
             .putString("store_loyalty_spend_per_point", validSpend.toString())
+            .putInt("store_loyalty_validity_days", validDays)
             .apply()
 
         viewModelScope.launch {
             if (applyToAllCustomers) {
                 repository.updateAllCustomersLoyaltyRules(validGoal, validReward)
             }
+            val validityDesc = if (validDays > 0) "$validDays يوماً" else "دائمة بدون انتهاء"
             repository.logActivity(
                 user = _currentUser.value,
                 actionType = "LOYALTY_CAMPAIGN_UPDATED",
-                description = "تحديث شروط حملة الولاء: الهدف ($validGoal نقطة) • المكافأة ($validReward ${_currencySymbol.value}) • معدل الكسب (1 نقطة لكل $validSpend ${_currencySymbol.value})"
+                description = "تحديث شروط حملة الولاء: الهدف ($validGoal نقطة) • المكافأة ($validReward ${_currencySymbol.value}) • معدل الكسب (1 نقطة لكل $validSpend ${_currencySymbol.value}) • شرط المدة الزمنية ($validityDesc)"
             )
             showStatusMessage("تم حفظ وتطبيق شروط حملة الولاء الجديدة بنجاح ✓")
+        }
+    }
+
+    fun isCustomerLoyaltyExpired(customer: Customer?): Boolean {
+        if (customer == null || customer.loyaltyPoints <= 0) return false
+        val validityDays = _loyaltyValidityDays.value
+        if (validityDays <= 0) return false
+        val elapsedDays = ((System.currentTimeMillis() - customer.updatedAt) / (1000L * 60 * 60 * 24)).toInt()
+        return elapsedDays > validityDays
+    }
+
+    fun getCustomerLoyaltyRemainingDays(customer: Customer?): Int? {
+        if (customer == null || customer.loyaltyPoints <= 0) return null
+        val validityDays = _loyaltyValidityDays.value
+        if (validityDays <= 0) return null
+        val elapsedDays = ((System.currentTimeMillis() - customer.updatedAt) / (1000L * 60 * 60 * 24)).toInt()
+        return (validityDays - elapsedDays).coerceAtLeast(0)
+    }
+
+    fun renewCustomerLoyaltyValidity(customer: Customer) {
+        viewModelScope.launch {
+            val now = System.currentTimeMillis()
+            repository.saveCustomer(
+                customer.copy(updatedAt = now, syncStatus = RecordSyncState.PENDING)
+            )
+            showStatusMessage("تم تمديد وتجديد صلاحية نقاط العميل (${customer.name}) بنجاح ✓")
         }
     }
 

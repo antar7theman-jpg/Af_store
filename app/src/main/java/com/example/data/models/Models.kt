@@ -629,7 +629,7 @@ data class WorkerLocation(
     val batteryPercent: Int = 100
 ) {
     val formattedTime: String
-        get() = SimpleDateFormat("HH:mm:ss dd/MM", Locale.getDefault()).format(Date(timestamp))
+        get() = SimpleDateFormat("HH:mm:ss dd/MM", Locale.US).format(Date(timestamp))
 
     val isRecentlyActive: Boolean
         get() = (System.currentTimeMillis() - timestamp) < 1000 * 60 * 15 // Active in last 15 mins

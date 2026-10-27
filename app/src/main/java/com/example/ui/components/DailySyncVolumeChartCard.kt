@@ -462,7 +462,7 @@ private fun calculateDailySyncVolume(
 ): List<DailySyncVolumePoint> {
     val now = System.currentTimeMillis()
     val calendar = Calendar.getInstance()
-    val dateFormat = SimpleDateFormat("d/M", Locale.getDefault())
+    val dateFormat = SimpleDateFormat("d/M", Locale.US)
     val results = mutableListOf<DailySyncVolumePoint>()
 
     val allSalesSynced = sales.count { it.syncStatus == RecordSyncState.SYNCED }

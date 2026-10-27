@@ -77,6 +77,7 @@ fun LoyaltyDashboardScreen(
     val loyaltyGoalDefault by viewModel.loyaltyGoalDefault.collectAsStateWithLifecycle()
     val loyaltyRewardDefault by viewModel.loyaltyRewardDefault.collectAsStateWithLifecycle()
     val loyaltySpendPerPoint by viewModel.loyaltySpendPerPoint.collectAsStateWithLifecycle()
+    val loyaltyValidityDays by viewModel.loyaltyValidityDays.collectAsStateWithLifecycle()
 
     if (showPdfDialog != null) {
         UniversalSectionPdfReportDialog(
@@ -100,10 +101,11 @@ fun LoyaltyDashboardScreen(
             initialGoal = loyaltyGoalDefault,
             initialReward = loyaltyRewardDefault,
             initialSpendPerPoint = loyaltySpendPerPoint,
+            initialValidityDays = loyaltyValidityDays,
             currencySymbol = currencySymbol,
             onDismiss = { showEditCampaignDialog = false },
-            onSave = { goal, reward, spend, applyAll ->
-                viewModel.updateLoyaltyCampaignSettings(goal, reward, spend, applyAll)
+            onSave = { goal, reward, spend, validityDays, applyAll ->
+                viewModel.updateLoyaltyCampaignSettings(goal, reward, spend, validityDays, applyAll)
                 showEditCampaignDialog = false
             }
         )
@@ -392,7 +394,7 @@ fun LoyaltyDashboardScreen(
                                 )
                                 Spacer(modifier = Modifier.height(3.dp))
                                 Text(
-                                    text = "يحصل العميل على قسيمة خصم مالي قابلة للخصم التلقائي مباشرة من فاتورة المبيعات القادمة عند تسييل الرمز داخل شاشة مراجعة المبيعات والكاشير.",
+                                    text = "يحصل العميل على قسيمة خصم مالي قابلة للخصم التلقائي مباشرة من فاتورة المبيعات القادمة عند تسييل الرمز داخل شاشة مراجعة المبيعات والكاشير. ${if (loyaltyValidityDays > 0) "• شرط الصلاحية: النقاط صالحة لمدة $loyaltyValidityDays يوماً من تاريخ آخر نشاط شراء." else "• شرط الصلاحية: النقاط دائمة ومفتوحة بدون انتهاء."}",
                                     fontSize = 10.sp,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     lineHeight = 14.sp
@@ -426,6 +428,16 @@ fun LoyaltyDashboardScreen(
                                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                     Text("معدل الكسب", fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     Text("1 نقطة / ${loyaltySpendPerPoint.toInt()} $currencySymbol", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+                                }
+                                VerticalDivider(modifier = Modifier.height(24.dp), color = semantic.cardBorder)
+                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                    Text("شرط المدة الزمنية", fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Text(
+                                        if (loyaltyValidityDays > 0) "$loyaltyValidityDays يوماً" else "دائمة / مفتوحة",
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color(0xFFD97706)
+                                    )
                                 }
                             }
                         }
@@ -669,6 +681,8 @@ fun LoyaltyDashboardScreen(
                             Spacer(modifier = Modifier.width(16.dp))
 
                             // Right section (Points counter & Rewards status)
+                            val isCustomerExpired = viewModel.isCustomerLoyaltyExpired(customer)
+                            val remainingLoyaltyDays = viewModel.getCustomerLoyaltyRemainingDays(customer)
                             Column(
                                 horizontalAlignment = Alignment.End,
                                 verticalArrangement = Arrangement.spacedBy(4.dp)
@@ -677,10 +691,23 @@ fun LoyaltyDashboardScreen(
                                     text = "${customer.loyaltyPoints} / ${customer.loyaltyGoal} نقطة",
                                     fontSize = 11.5.sp,
                                     fontWeight = FontWeight.Bold,
-                                    color = if (isGoalMet) Color(0xFF10B981) else MaterialTheme.colorScheme.primary
+                                    color = if (isCustomerExpired) Color(0xFFDC2626) else if (isGoalMet) Color(0xFF10B981) else MaterialTheme.colorScheme.primary
                                 )
 
-                                if (isGoalMet) {
+                                if (isCustomerExpired) {
+                                    Surface(
+                                        shape = RoundedCornerShape(4.dp),
+                                        color = Color(0xFFFEE2E2)
+                                    ) {
+                                        Text(
+                                            text = "منتهية الصلاحية ⏱️",
+                                            color = Color(0xFFDC2626),
+                                            fontSize = 8.5.sp,
+                                            fontWeight = FontWeight.ExtraBold,
+                                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                                        )
+                                    }
+                                } else if (isGoalMet) {
                                     Surface(
                                         shape = RoundedCornerShape(4.dp),
                                         color = Color(0xFFD1FAE5)
@@ -698,6 +725,15 @@ fun LoyaltyDashboardScreen(
                                         text = "المشتريات: ${String.format(Locale.US, "%.0f", customer.totalPurchases)} د.ج",
                                         fontSize = 9.sp,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+
+                                if (remainingLoyaltyDays != null && !isCustomerExpired && customer.loyaltyPoints > 0) {
+                                    Text(
+                                        text = "متبقي $remainingLoyaltyDays يوم",
+                                        fontSize = 8.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = if (remainingLoyaltyDays <= 15) Color(0xFFD97706) else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
                                     )
                                 }
                             }
@@ -793,6 +829,47 @@ fun LoyaltyDashboardScreen(
                         singleLine = true
                     )
 
+                    // Validity Status Card
+                    val isExpiredTarget = viewModel.isCustomerLoyaltyExpired(target)
+                    val remainingDaysTarget = viewModel.getCustomerLoyaltyRemainingDays(target)
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = if (isExpiredTarget) Color(0xFFFEE2E2) else Color(0xFFD97706).copy(alpha = 0.08f),
+                        border = BorderStroke(1.dp, if (isExpiredTarget) Color(0xFFDC2626).copy(alpha = 0.4f) else Color(0xFFD97706).copy(alpha = 0.3f)),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "حالة شرط المدة الزمنية:",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 11.sp,
+                                    color = if (isExpiredTarget) Color(0xFFDC2626) else Color(0xFFB45309)
+                                )
+                                Text(
+                                    text = if (isExpiredTarget) "النقاط منتهية الصلاحية بموجب شرط المدة ($loyaltyValidityDays يوم)" else if (remainingDaysTarget != null) "صالحة ومتبقي $remainingDaysTarget يوم قبل الانتهاء" else "صالحة ودائمة (بدون مدة انتهاء)",
+                                    fontSize = 10.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            OutlinedButton(
+                                onClick = {
+                                    viewModel.renewCustomerLoyaltyValidity(target)
+                                    selectedCustomerForEdit = null
+                                },
+                                shape = RoundedCornerShape(8.dp),
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                modifier = Modifier.height(32.dp)
+                            ) {
+                                Text("تمديد الصلاحية ⏱️", fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
+
                     Row(
                         modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -859,13 +936,15 @@ fun EditLoyaltyCampaignDialog(
     initialGoal: Int,
     initialReward: Double,
     initialSpendPerPoint: Double,
+    initialValidityDays: Int = 90,
     currencySymbol: String,
     onDismiss: () -> Unit,
-    onSave: (goal: Int, rewardValue: Double, spendPerPoint: Double, applyToAll: Boolean) -> Unit
+    onSave: (goal: Int, rewardValue: Double, spendPerPoint: Double, validityDays: Int, applyToAll: Boolean) -> Unit
 ) {
     var goalInput by remember { mutableStateOf(initialGoal.toString()) }
     var rewardInput by remember { mutableStateOf(String.format(Locale.US, "%.2f", initialReward)) }
     var spendInput by remember { mutableStateOf(initialSpendPerPoint.toInt().toString()) }
+    var validityDaysInput by remember { mutableStateOf(initialValidityDays.toString()) }
     var applyToAllCustomers by remember { mutableStateOf(true) }
 
     Dialog(onDismissRequest = onDismiss) {
@@ -1030,6 +1109,75 @@ fun EditLoyaltyCampaignDialog(
                     )
                 }
 
+                // Field 4: Time Duration Condition (شرط المدة الزمنية لصلاحية النقاط والقسائم)
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "شرط المدة الزمنية لصلاحية النقاط (أيام):",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        val daysInt = validityDaysInput.toIntOrNull() ?: 0
+                        Text(
+                            text = if (daysInt > 0) "$daysInt يوماً" else "دائمة / بدون انتهاء",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFFD97706)
+                        )
+                    }
+                    Text(
+                        text = "المدة الزمنية لصلاحية نقاط ولاء العميل بعد آخر شراء. بعد انقضاء هذه المدة تعتبر النقاط منتهية الصلاحية حتى يتم الشراء مجدداً أو تجديدها.",
+                        fontSize = 10.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    OutlinedTextField(
+                        value = validityDaysInput,
+                        onValueChange = { validityDaysInput = it },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        singleLine = true,
+                        trailingIcon = {
+                            Text("يوم", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(end = 12.dp))
+                        },
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth().testTag("edit_loyalty_validity_days_input")
+                    )
+                    // Preset chips for validity duration:
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        listOf(
+                            30 to "30 يوم",
+                            60 to "60 يوم",
+                            90 to "90 يوم",
+                            180 to "180 يوم",
+                            365 to "سنة",
+                            0 to "دائمة"
+                        ).forEach { (days, label) ->
+                            val isSelected = validityDaysInput == days.toString()
+                            Surface(
+                                shape = RoundedCornerShape(6.dp),
+                                color = if (isSelected) Color(0xFFD97706).copy(alpha = 0.2f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+                                border = BorderStroke(1.dp, if (isSelected) Color(0xFFD97706) else Color.Transparent),
+                                modifier = Modifier.clickable { validityDaysInput = days.toString() }
+                            ) {
+                                Text(
+                                    text = label,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (isSelected) Color(0xFFB45309) else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+
                 // Info card for applying to all customers
                 Surface(
                     shape = RoundedCornerShape(10.dp),
@@ -1081,7 +1229,8 @@ fun EditLoyaltyCampaignDialog(
                             val gl = goalInput.toIntOrNull()?.coerceAtLeast(1) ?: 500
                             val rwd = rewardInput.toDoubleOrNull()?.coerceAtLeast(0.0) ?: 50.0
                             val spnd = spendInput.toDoubleOrNull()?.coerceAtLeast(1.0) ?: 100.0
-                            onSave(gl, rwd, spnd, applyToAllCustomers)
+                            val vDays = validityDaysInput.toIntOrNull()?.coerceAtLeast(0) ?: 90
+                            onSave(gl, rwd, spnd, vDays, applyToAllCustomers)
                         },
                         shape = RoundedCornerShape(12.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF10B981)),

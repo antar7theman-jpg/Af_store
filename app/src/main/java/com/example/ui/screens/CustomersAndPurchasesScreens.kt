@@ -312,47 +312,57 @@ fun InvoicesArchiveScreen(viewModel: AntarSalesViewModel) {
                 modifier = Modifier.padding(12.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                // Header Row 1: Full Title and Subtitle with Icon (100% width)
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    Surface(
-                        shape = RoundedCornerShape(12.dp),
-                        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = if (semantic.isDark) 0.5f else 0.7f),
-                        border = BorderStroke(
-                            1.dp,
-                            MaterialTheme.colorScheme.primary.copy(alpha = if (semantic.isDark) 0.4f else 0.6f)
-                        ),
-                        modifier = Modifier.size(40.dp)
+                // Header Row 1: Full Title and Subtitle with Icon (Right on user's side)
+                CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Icon(
-                                Icons.Default.ReceiptLong,
-                                contentDescription = "أرشيف الفواتير",
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(22.dp)
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = if (semantic.isDark) 0.5f else 0.7f),
+                            border = BorderStroke(
+                                1.dp,
+                                MaterialTheme.colorScheme.primary.copy(alpha = if (semantic.isDark) 0.4f else 0.6f)
+                            ),
+                            modifier = Modifier.size(40.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    Icons.Default.ReceiptLong,
+                                    contentDescription = "أرشيف الفواتير",
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(22.dp)
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.width(10.dp))
+
+                        Column(
+                            modifier = Modifier.weight(1f),
+                            horizontalAlignment = Alignment.Start
+                        ) {
+                            Text(
+                                text = "أرشيف الفواتير والمبيعات",
+                                fontWeight = FontWeight.Black,
+                                fontSize = 17.sp,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                textAlign = TextAlign.Start,
+                                modifier = Modifier.fillMaxWidth(),
+                                maxLines = 1
+                            )
+                            Text(
+                                text = "محفوظة محلياً في Room • جاهزة للمعاينة والطباعة والمرتجعات",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = Color(0xFF059669),
+                                textAlign = TextAlign.Start,
+                                modifier = Modifier.fillMaxWidth(),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
                         }
-                    }
-
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "أرشيف الفواتير والمبيعات",
-                            fontWeight = FontWeight.Black,
-                            fontSize = 17.sp,
-                            color = MaterialTheme.colorScheme.onSurface,
-                            maxLines = 1
-                        )
-                        Text(
-                            text = "محفوظة محلياً في Room • جاهزة للمعاينة والطباعة والمرتجعات",
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = Color(0xFF059669),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
                     }
                 }
 
@@ -1706,44 +1716,54 @@ fun PurchaseInvoicesScreen(viewModel: AntarSalesViewModel) {
                     .padding(14.dp),
                 verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
-                // Header Row 1: Full Title and Subtitle with Icon (100% width)
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    Surface(
-                        shape = RoundedCornerShape(12.dp),
-                        color = softBlueBg,
-                        border = BorderStroke(1.dp, primaryBlue.copy(alpha = 0.55f)),
-                        modifier = Modifier.size(40.dp)
+                // Header Row 1: Full Title and Subtitle with Icon (Right on user's side)
+                CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Icon(
-                                imageVector = Icons.Default.AddShoppingCart,
-                                contentDescription = "فواتير الشراء",
-                                tint = primaryBlue,
-                                modifier = Modifier.size(22.dp)
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = softBlueBg,
+                            border = BorderStroke(1.dp, primaryBlue.copy(alpha = 0.55f)),
+                            modifier = Modifier.size(40.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    imageVector = Icons.Default.AddShoppingCart,
+                                    contentDescription = "فواتير الشراء",
+                                    tint = primaryBlue,
+                                    modifier = Modifier.size(22.dp)
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.width(10.dp))
+
+                        Column(
+                            modifier = Modifier.weight(1f),
+                            horizontalAlignment = Alignment.Start
+                        ) {
+                            Text(
+                                text = "فواتير الشراء والتوريد",
+                                fontWeight = FontWeight.Black,
+                                fontSize = 17.sp,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                textAlign = TextAlign.Start,
+                                modifier = Modifier.fillMaxWidth(),
+                                maxLines = 1
+                            )
+                            Text(
+                                text = "تسجيل مشتريات وسلع جديدة ومتابعة ديون الموردين",
+                                fontSize = 11.5.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                textAlign = TextAlign.Start,
+                                modifier = Modifier.fillMaxWidth(),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
                         }
-                    }
-
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "فواتير الشراء والتوريد",
-                            fontWeight = FontWeight.Black,
-                            fontSize = 17.sp,
-                            color = MaterialTheme.colorScheme.onSurface,
-                            maxLines = 1
-                        )
-                        Text(
-                            text = "تسجيل مشتريات وسلع جديدة ومتابعة ديون الموردين",
-                            fontSize = 11.5.sp,
-                            fontWeight = FontWeight.Medium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
                     }
                 }
 
@@ -1753,38 +1773,6 @@ fun PurchaseInvoicesScreen(viewModel: AntarSalesViewModel) {
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Surface(
-                        onClick = { showCreateModal = true },
-                        shape = RoundedCornerShape(10.dp),
-                        color = primaryBlue,
-                        modifier = Modifier
-                            .weight(1.3f)
-                            .height(36.dp)
-                            .testTag("add_purchase_invoice_fab")
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .padding(horizontal = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.Center
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.AddShoppingCart,
-                                contentDescription = "تسجيل فاتورة شراء",
-                                tint = Color.White,
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Spacer(modifier = Modifier.width(5.dp))
-                            Text(
-                                text = "تسجيل فاتورة شراء",
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 12.sp,
-                                color = Color.White
-                            )
-                        }
-                    }
-
                     Surface(
                         onClick = { showPurchasesPdfReportDialog = true },
                         shape = RoundedCornerShape(10.dp),
@@ -1817,6 +1805,38 @@ fun PurchaseInvoicesScreen(viewModel: AntarSalesViewModel) {
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 12.sp,
                                 color = Color(0xFF0284C7)
+                            )
+                        }
+                    }
+
+                    Surface(
+                        onClick = { showCreateModal = true },
+                        shape = RoundedCornerShape(10.dp),
+                        color = primaryBlue,
+                        modifier = Modifier
+                            .weight(1.3f)
+                            .height(36.dp)
+                            .testTag("add_purchase_invoice_fab")
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(horizontal = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.AddShoppingCart,
+                                contentDescription = "تسجيل فاتورة شراء",
+                                tint = Color.White,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(5.dp))
+                            Text(
+                                text = "تسجيل فاتورة شراء",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 12.sp,
+                                color = Color.White
                             )
                         }
                     }

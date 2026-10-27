@@ -74,6 +74,7 @@ fun PosCheckoutReviewSheet(
     val cartItems by viewModel.cartItems.collectAsStateWithLifecycle()
     val selectedCustomer by viewModel.selectedCustomer.collectAsStateWithLifecycle()
     val isLoyaltyDiscountApplied by viewModel.isLoyaltyDiscountApplied.collectAsStateWithLifecycle()
+    val loyaltyValidityDays by viewModel.loyaltyValidityDays.collectAsStateWithLifecycle()
     val customers by viewModel.customers.collectAsStateWithLifecycle()
     val customerCustomPrices by viewModel.customerCustomPrices.collectAsStateWithLifecycle()
     val paymentMethod by viewModel.paymentMethod.collectAsStateWithLifecycle()
@@ -140,10 +141,11 @@ fun PosCheckoutReviewSheet(
         if (!isInvoiceTvaEnabled) 0.0
         else afterDiscount * (invoiceTvaPercent.coerceAtLeast(0.0) / 100.0)
     }
-    val netTotal = remember(afterDiscount, invoiceTvaAmount, isLoyaltyDiscountApplied, selectedCustomer) {
+    val netTotal = remember(afterDiscount, invoiceTvaAmount, isLoyaltyDiscountApplied, selectedCustomer, loyaltyValidityDays) {
         val baseTotal = afterDiscount + invoiceTvaAmount
         val cust = selectedCustomer
-        if (isLoyaltyDiscountApplied && cust != null && cust.loyaltyPoints >= cust.loyaltyGoal) {
+        val isExpired = viewModel.isCustomerLoyaltyExpired(cust)
+        if (isLoyaltyDiscountApplied && cust != null && cust.loyaltyPoints >= cust.loyaltyGoal && !isExpired) {
             (baseTotal - cust.loyaltyRewardValue).coerceAtLeast(0.0)
         } else {
             baseTotal
@@ -1105,8 +1107,10 @@ fun PosCheckoutReviewSheet(
                                                 horizontalArrangement = Arrangement.SpaceBetween,
                                                 verticalAlignment = Alignment.CenterVertically
                                             ) {
-                                                val hasRewardUnlocked = selectedCustomer!!.loyaltyPoints >= selectedCustomer!!.loyaltyGoal
-                                                Column {
+                                                val isLoyaltyExpired = viewModel.isCustomerLoyaltyExpired(selectedCustomer)
+                                                val remainingLoyaltyDays = viewModel.getCustomerLoyaltyRemainingDays(selectedCustomer)
+                                                val hasRewardUnlocked = selectedCustomer!!.loyaltyPoints >= selectedCustomer!!.loyaltyGoal && !isLoyaltyExpired
+                                                Column(modifier = Modifier.weight(1f)) {
                                                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                                                         Text(
                                                             text = "🎁 نقاط الولاء: ${selectedCustomer!!.loyaltyPoints} / ${selectedCustomer!!.loyaltyGoal}",
@@ -1127,14 +1131,48 @@ fun PosCheckoutReviewSheet(
                                                                     modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
                                                                 )
                                                             }
+                                                        } else if (isLoyaltyExpired) {
+                                                            Surface(
+                                                                shape = RoundedCornerShape(4.dp),
+                                                                color = Color(0xFFFEE2E2)
+                                                            ) {
+                                                                Text(
+                                                                    text = "منتهية الصلاحية ⏱️",
+                                                                    fontSize = 8.5.sp,
+                                                                    fontWeight = FontWeight.Bold,
+                                                                    color = Color(0xFFDC2626),
+                                                                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                                                                )
+                                                            }
                                                         }
                                                     }
-                                                    Text(
-                                                        text = "اكسب 1 نقطة لكل 100 د.ج مبيعات",
-                                                        style = MaterialTheme.typography.labelSmall,
-                                                        fontSize = 9.sp,
-                                                        color = colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
-                                                    )
+                                                    Row(
+                                                        verticalAlignment = Alignment.CenterVertically,
+                                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                                    ) {
+                                                        Text(
+                                                            text = "اكسب 1 نقطة لكل 100 د.ج مبيعات",
+                                                            style = MaterialTheme.typography.labelSmall,
+                                                            fontSize = 9.sp,
+                                                            color = colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                                                        )
+                                                        if (isLoyaltyExpired) {
+                                                            Text(
+                                                                text = "• تجاوزت شرط المدة ($loyaltyValidityDays يوم)",
+                                                                style = MaterialTheme.typography.labelSmall,
+                                                                fontSize = 9.sp,
+                                                                color = Color(0xFFDC2626),
+                                                                fontWeight = FontWeight.Bold
+                                                            )
+                                                        } else if (remainingLoyaltyDays != null) {
+                                                            Text(
+                                                                text = "• الصلاحية: متبقي $remainingLoyaltyDays يوم",
+                                                                style = MaterialTheme.typography.labelSmall,
+                                                                fontSize = 9.sp,
+                                                                color = if (remainingLoyaltyDays <= 15) Color(0xFFD97706) else colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
+                                                            )
+                                                        }
+                                                    }
                                                 }
 
                                                 if (hasRewardUnlocked) {

@@ -82,6 +82,7 @@ import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -208,8 +209,11 @@ fun SyncStatusContent(
     val lastSyncTimeMillis by syncManager.lastSyncTimeMillis.collectAsState()
     val lastSyncText = remember(lastSyncTimeMillis) {
         if (lastSyncTimeMillis > 0L) {
-            val sdf = java.text.SimpleDateFormat("yyyy-MM-dd hh:mm a", java.util.Locale("ar"))
-            sdf.format(java.util.Date(lastSyncTimeMillis))
+            val cal = java.util.Calendar.getInstance().apply { timeInMillis = lastSyncTimeMillis }
+            val isAm = cal.get(java.util.Calendar.AM_PM) == java.util.Calendar.AM
+            val amPm = if (isAm) "ص" else "م"
+            val timeDate = java.text.SimpleDateFormat("dd-MM-yyyy hh:mm", java.util.Locale.US).format(java.util.Date(lastSyncTimeMillis))
+            "$timeDate $amPm"
         } else {
             "لم تُسجل مزامنة سابقة بعد"
         }
@@ -800,7 +804,7 @@ private fun LatencyMetricBox(
 }
 
 /**
- * بطاقة توقيت آخر مزامنة مكتملة
+ * بطاقة توقيت آخر مزامنة مكتملة بتنسيق متناسق ومضغوط
  */
 @Composable
 private fun LastSyncTimeCard(
@@ -814,47 +818,84 @@ private fun LastSyncTimeCard(
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
         modifier = Modifier.fillMaxWidth()
     ) {
-        Row(
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(14.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                .padding(horizontal = 14.dp, vertical = 11.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            Surface(
-                shape = RoundedCornerShape(10.dp),
-                color = Color(0xFF10B981).copy(alpha = 0.15f),
-                border = BorderStroke(1.dp, Color(0xFF10B981).copy(alpha = 0.4f)),
-                modifier = Modifier.size(38.dp)
+            // الصف العلوي: أيقونة متناسقة مع باقي البطاقات + عنوان + شارة الحالة
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Icon(
-                        imageVector = if (isSyncing) Icons.Default.CloudSync else Icons.Default.CloudDone,
-                        contentDescription = null,
-                        tint = Color(0xFF10B981),
-                        modifier = Modifier.size(20.dp)
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = Color(0xFF10B981).copy(alpha = 0.14f),
+                        modifier = Modifier.size(28.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = if (isSyncing) Icons.Default.CloudSync else Icons.Default.CloudDone,
+                                contentDescription = null,
+                                tint = Color(0xFF10B981),
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                    }
+                    Text(
+                        text = "آخر مزامنة سحابية",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                }
+
+                Surface(
+                    shape = RoundedCornerShape(6.dp),
+                    color = Color(0xFF10B981).copy(alpha = 0.15f),
+                    border = BorderStroke(1.dp, Color(0xFF10B981).copy(alpha = 0.5f))
+                ) {
+                    Text(
+                        text = if (isSyncing) "جاري الرفع ⚡" else "متطابقة ومحدثة ✓",
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = Color(0xFF10B981),
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                     )
                 }
             }
 
-            Column(modifier = Modifier.weight(1f)) {
+            // الصف السفلي: التوقيت بشكل مدمج وأنيق
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
                 Text(
-                    text = "توقيت آخر مزامنة سحابية",
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Bold,
+                    text = "توقيت الحفظ:",
+                    fontSize = 11.5.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                Text(
-                    text = if (isSyncing) "المزامنة جارية الآن..." else lastSyncTimestampText.ifBlank { "لم تُسجل مزامنة سابقة بعد" },
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.ExtraBold,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
-                Text(
-                    text = "جميع التعديلات متوافقة تلقائياً مع السحابة",
-                    fontSize = 10.5.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                Surface(
+                    shape = RoundedCornerShape(6.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                    border = BorderStroke(0.8.dp, MaterialTheme.colorScheme.outlineVariant)
+                ) {
+                    Text(
+                        text = if (isSyncing) "المزامنة جارية الآن..." else lastSyncTimestampText.ifBlank { "لم تُسجل بعد" },
+                        fontSize = 11.5.sp,
+                        fontWeight = FontWeight.Bold,
+                        fontFamily = FontFamily.Monospace,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.5.dp)
+                    )
+                }
             }
         }
     }

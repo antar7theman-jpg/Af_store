@@ -25,10 +25,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextDirection
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import java.util.Locale
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.data.models.User
 import com.example.data.models.WorkerLocation
@@ -503,13 +507,16 @@ fun WorkerLocationCard(
                 ) {
                     Column {
                         Text(text = "إحداثيات GPS السحابية الحية", fontSize = 10.sp, color = semantic.textSecondary)
-                        Text(
-                            text = "Lat: %.4f, Lng: %.4f".format(worker.latitude, worker.longitude),
-                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 12.sp,
-                            color = semantic.textPrimary
-                        )
+                        CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                            Text(
+                                text = String.format(Locale.US, "Lat: %.4f, Lng: %.4f", worker.latitude, worker.longitude),
+                                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 12.sp,
+                                color = semantic.textPrimary,
+                                style = LocalTextStyle.current.copy(textDirection = TextDirection.Ltr)
+                            )
+                        }
                     }
                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         IconButton(
