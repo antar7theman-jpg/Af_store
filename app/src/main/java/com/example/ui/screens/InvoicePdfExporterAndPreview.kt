@@ -119,7 +119,10 @@ data class InvoicePdfPayload(
         get() = lines.sumOf { it.fullCartons }
 
     val qrContentString: String
-        get() = "INVOICE|#1-$invoiceNumber|$storeName|$formattedDateTime|Total:${String.format(Locale.US, "%.2f", netTotal)}$currency|Paid:${String.format(Locale.US, "%.2f", especesAmount)}|Debt:${String.format(Locale.US, "%.2f", creditAmount)}"
+        get() {
+            val invCode = if (invoiceNumber.startsWith("#") || invoiceNumber.startsWith("Pre")) invoiceNumber else "#$invoiceNumber"
+            return "INVOICE|$invCode|$storeName|$formattedDateTime|Total:${String.format(Locale.US, "%.2f", netTotal)}$currency|Paid:${String.format(Locale.US, "%.2f", especesAmount)}|Debt:${String.format(Locale.US, "%.2f", creditAmount)}"
+        }
 }
 
 object InvoicePdfExporter {
@@ -256,9 +259,10 @@ object InvoicePdfExporter {
         canvas.drawRoundRect(contentLeft, currentY, contentRight, currentY + metaBoxHeight, 8f, 8f, boxFillPaint)
         canvas.drawRoundRect(contentLeft, currentY, contentRight, currentY + metaBoxHeight, 8f, 8f, strokeLinePaint)
 
+        val invDisplayNumber = if (payload.invoiceNumber.startsWith("#") || payload.invoiceNumber.startsWith("Pre")) payload.invoiceNumber else "#${payload.invoiceNumber}"
         if (isA4) {
             headerBoldPaint.textAlign = Paint.Align.RIGHT
-            canvas.drawText("رقم الفاتورة: #1-${payload.invoiceNumber}", contentRight - 12f, currentY + 16f, headerBoldPaint)
+            canvas.drawText("رقم الفاتورة: $invDisplayNumber", contentRight - 12f, currentY + 16f, headerBoldPaint)
             canvas.drawText("التاريخ والوقت: ${payload.formattedDateTime}", contentRight - 12f, currentY + 32f, headerBoldPaint)
 
             headerBoldPaint.textAlign = Paint.Align.LEFT
@@ -281,7 +285,7 @@ object InvoicePdfExporter {
             }
         } else {
             headerBoldPaint.textAlign = Paint.Align.CENTER
-            canvas.drawText("فاتورة رقم: #1-${payload.invoiceNumber} • ${payload.formattedDateTime}", pageWidth / 2f, currentY + 16f, headerBoldPaint)
+            canvas.drawText("فاتورة رقم: $invDisplayNumber • ${payload.formattedDateTime}", pageWidth / 2f, currentY + 16f, headerBoldPaint)
             canvas.drawText("الزبون: ${payload.customerName} | البائع: ${payload.cashierName}", pageWidth / 2f, currentY + 32f, headerBoldPaint)
             canvas.drawText("طريقة الدفع: ${payload.paymentMethodAr}", pageWidth / 2f, currentY + 46f, headerBoldPaint)
             payload.customerLocationQrBitmap?.let { qrBmp ->
@@ -515,11 +519,12 @@ object InvoicePdfExporter {
                 file
             )
 
+            val invCode = if (payload.invoiceNumber.startsWith("#") || payload.invoiceNumber.startsWith("Pre")) payload.invoiceNumber else "#${payload.invoiceNumber}"
             val shareIntent = Intent(Intent.ACTION_SEND).apply {
                 type = "application/pdf"
                 putExtra(Intent.EXTRA_STREAM, fileUri)
-                putExtra(Intent.EXTRA_SUBJECT, "فاتورة مبيعات - #${payload.invoiceNumber}")
-                putExtra(Intent.EXTRA_TEXT, "مرفق فاتورة مبيعات رقم #${payload.invoiceNumber} من ${payload.storeName}")
+                putExtra(Intent.EXTRA_SUBJECT, "فاتورة مبيعات - $invCode")
+                putExtra(Intent.EXTRA_TEXT, "مرفق فاتورة مبيعات رقم $invCode من ${payload.storeName}")
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                 clipData = ClipData.newRawUri("فاتورة PDF", fileUri)
             }
@@ -681,8 +686,9 @@ fun InvoicePdfPreviewDialog(
                                     fontSize = 16.sp,
                                     color = Color.White
                                 )
+                                val invCode = if (payload.invoiceNumber.startsWith("#") || payload.invoiceNumber.startsWith("Pre")) payload.invoiceNumber else "#${payload.invoiceNumber}"
                                 Text(
-                                    text = "رقم: #${payload.invoiceNumber} • ${payload.formattedDateTime}",
+                                    text = "رقم: $invCode • ${payload.formattedDateTime}",
                                     fontSize = 11.5.sp,
                                     color = Color(0xFF94A3B8)
                                 )
@@ -902,7 +908,8 @@ private fun InvoicePdfVisualPreviewCard(payload: InvoicePdfPayload) {
                     verticalArrangement = Arrangement.spacedBy(3.dp)
                 ) {
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text("رقم الفاتورة: #${payload.invoiceNumber}", fontWeight = FontWeight.Bold, fontSize = 11.sp, color = Color(0xFF0F172A))
+                        val invDisplay = if (payload.invoiceNumber.startsWith("#") || payload.invoiceNumber.startsWith("Pre")) payload.invoiceNumber else "#${payload.invoiceNumber}"
+                        Text("رقم الفاتورة: $invDisplay", fontWeight = FontWeight.Bold, fontSize = 11.sp, color = Color(0xFF0F172A))
                         Text(payload.formattedDateTime, fontSize = 10.5.sp, color = Color(0xFF64748B))
                     }
                     Row(

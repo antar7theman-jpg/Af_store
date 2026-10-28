@@ -32,6 +32,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -141,6 +142,54 @@ internal data class DebtPaymentReceiptData(
     val invoiceReference: String? = null
 )
 
+fun normalizeDebtInvoiceReference(raw: String?): String {
+    if (raw.isNullOrBlank()) return ""
+    val clean = raw.trim()
+        .replace("Pre #", "")
+        .replace("Pre#", "")
+        .replace("Pre ", "")
+        .replace("Pre", "")
+        .replace("pre #", "")
+        .replace("pre#", "")
+        .replace("pre ", "")
+        .replace("pre", "")
+        .replace("\u202A", "")
+        .replace("\u202C", "")
+        .replace("\u200E", "")
+        .trim()
+
+    val invertedMatch = Regex("""^(\d{6})-#?(\d+)$""").find(clean)
+    if (invertedMatch != null) {
+        val datePart = invertedMatch.groupValues[1]
+        val seqPart = invertedMatch.groupValues[2]
+        return "#$seqPart-$datePart"
+    }
+
+    val standardMatch = Regex("""^#?(\d+)-(\d{6})$""").find(clean)
+    if (standardMatch != null) {
+        val seqPart = standardMatch.groupValues[1]
+        val datePart = standardMatch.groupValues[2]
+        return "#$seqPart-$datePart"
+    }
+
+    val stripped = clean.removePrefix("#").trim()
+    return if (stripped.isNotBlank()) "#$stripped" else ""
+}
+
+fun sanitizeNotesDebtInvoiceRef(notes: String): String {
+    if (notes.isBlank()) return "تحصيل دفعة نقدية من حساب المديونية"
+    var result = notes.replace(Regex("""(\d{6})-#?(\d+)""")) { m ->
+        val datePart = m.groupValues[1]
+        val seqPart = m.groupValues[2]
+        "\u202A\u200E#$seqPart-$datePart\u200E\u202C"
+    }
+    result = result.replace(Regex("""(?<!\u200E)#(\d+-\d+)""")) { m ->
+        val num = m.groupValues[1]
+        "\u202A\u200E#$num\u200E\u202C"
+    }
+    return result
+}
+
 internal data class ShareCustomerDebtPayload(
     val customer: Customer,
     val transactions: List<CustomerTransaction>,
@@ -230,8 +279,15 @@ fun DebtsAndMovementsScreen(viewModel: AntarSalesViewModel) {
         val remainingAfterPayment = (currentDebt + laterPayments - laterDebts).coerceAtLeast(0.0)
         val previousBeforePayment = (remainingAfterPayment + paidAmount).coerceAtLeast(paidAmount)
 
-        val receiptCode = "PAY-${(txDateMillis / 1000).toString().takeLast(6)}"
-        val invCodeFromNotes = Regex("""#([A-Za-z0-9\-]+)""").find(notes)?.groupValues?.get(1)
+        val payMatch = Regex("""(Pay\s*#\d{1,5}-\d{6})""").find(notes)
+        val dateStr = SimpleDateFormat("ddMMyy", Locale.US).format(Date(txDateMillis))
+        val receiptCode = payMatch?.groupValues?.get(1)
+            ?: "Pay #${(txId ?: (txDateMillis / 1000 % 1000)).toString().takeLast(3)}-$dateStr"
+        val cleanNotes = notes.replace(Regex("""\[Pay\s*#\d{1,5}-\d{6}\]"""), "").trim()
+        val invRawCode = Regex("""(?:فاتورة|invoice|ref)\s*#?([A-Za-z0-9\-]+)""", RegexOption.IGNORE_CASE)
+            .find(cleanNotes)?.groupValues?.get(1)
+            ?: Regex("""#([A-Za-z0-9\-]+)""").find(cleanNotes)?.groupValues?.get(1)
+        val invCodeFromNotes = normalizeDebtInvoiceReference(invRawCode).takeIf { it.isNotBlank() }
         return DebtPaymentReceiptData(
             receiptNumber = receiptCode,
             partyType = "CUSTOMER",
@@ -240,7 +296,7 @@ fun DebtsAndMovementsScreen(viewModel: AntarSalesViewModel) {
             previousBalance = previousBeforePayment,
             paidAmount = paidAmount,
             remainingBalance = remainingAfterPayment,
-            notes = notes.ifBlank { "تحصيل دفعة نقدية من حساب المديونية" },
+            notes = cleanNotes.ifBlank { "تحصيل دفعة نقدية من حساب المديونية" },
             timestampMillis = txDateMillis,
             invoiceReference = invCodeFromNotes
         )
@@ -1342,7 +1398,12 @@ fun DebtsAndMovementsScreen(viewModel: AntarSalesViewModel) {
                 customerInitialInvoiceId = null
             },
             onConfirmPayment = { amount, notes, invoiceRef ->
-                viewModel.recordCustomerPayment(liveCustomer, amount, notes)
+                val now = System.currentTimeMillis()
+                val receiptNum = viewModel.generateNextPaymentReceiptNumber(now)
+                val cleanInv = invoiceRef?.trim()?.removePrefix("#")?.takeIf { it.isNotBlank() }
+                val invTag = if (cleanInv != null) " [فاتورة #$cleanInv]" else ""
+                val fullNotes = if (notes.isNotBlank()) "[$receiptNum]$invTag $notes" else "[$receiptNum]$invTag تحصيل دفعة نقدية من حساب المديونية"
+                viewModel.recordCustomerPayment(liveCustomer, amount, fullNotes)
                 customerForPayment = null
                 customerInitialInvoiceId = null
             },
@@ -1350,11 +1411,15 @@ fun DebtsAndMovementsScreen(viewModel: AntarSalesViewModel) {
                 val prevDebt = liveCustomer.balanceDebt
                 val remDebt = (prevDebt - amount).coerceAtLeast(0.0)
                 val now = System.currentTimeMillis()
-                viewModel.recordCustomerPayment(liveCustomer, amount, notes)
+                val receiptNum = viewModel.generateNextPaymentReceiptNumber(now)
+                val cleanInv = invoiceRef?.trim()?.removePrefix("#")?.takeIf { it.isNotBlank() }
+                val invTag = if (cleanInv != null) " [فاتورة #$cleanInv]" else ""
+                val fullNotes = if (notes.isNotBlank()) "[$receiptNum]$invTag $notes" else "[$receiptNum]$invTag تحصيل دفعة نقدية من حساب المديونية"
+                viewModel.recordCustomerPayment(liveCustomer, amount, fullNotes)
                 customerForPayment = null
                 customerInitialInvoiceId = null
                 activePaymentReceipt = DebtPaymentReceiptData(
-                    receiptNumber = "PAY-${(now / 1000).toString().takeLast(6)}",
+                    receiptNumber = receiptNum,
                     partyType = "CUSTOMER",
                     partyName = liveCustomer.name,
                     partyPhone = liveCustomer.phone,
@@ -1662,7 +1727,7 @@ private fun UnifiedMovementsTimelineList(
             val isCustomer = item.partyType == "CUSTOMER"
             val accentColor = if (isPayment) semantic.profitGreen else Color(0xFFEF4444)
             val dateStr = remember(item.timestampMillis) {
-                SimpleDateFormat("yyyy-MM-dd • hh:mm a", Locale.getDefault()).format(Date(item.timestampMillis))
+                SimpleDateFormat("yyyy-MM-dd • hh:mm a", Locale.US).format(Date(item.timestampMillis)).toEnglishDigits()
             }
 
             val badgeLabel = when {
@@ -2037,7 +2102,7 @@ private fun CustomerDebtsTabContent(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                             if (latestTx != null) {
-                                val lastDate = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date(latestTx.date))
+                                val lastDate = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date(latestTx.date)).toEnglishDigits()
                                 Text(
                                     text = "آخر حركة ($lastDate): ${latestTx.notes.ifBlank { if (latestTx.type == "PAYMENT") "سداد دفعة" else "تسجيل دين" }}",
                                     fontSize = 11.sp,
@@ -2320,7 +2385,7 @@ private fun SupplierDebtsTabContent(
         ) { inv ->
             val hasDebt = inv.remainingDebt > 0.009
             val dateStr = remember(inv.dateMillis) {
-                SimpleDateFormat("yyyy-MM-dd • hh:mm a", Locale.getDefault()).format(Date(inv.dateMillis))
+                SimpleDateFormat("yyyy-MM-dd • hh:mm a", Locale.US).format(Date(inv.dateMillis)).toEnglishDigits()
             }
 
             Card(
@@ -3096,6 +3161,10 @@ private fun CustomerDebtPaymentDialog(
         )
     }
 
+    var manualInvoiceNumber by remember(selectedInvoice, initialInvoiceId) {
+        mutableStateOf(selectedInvoice?.invoiceId ?: initialInvoiceId ?: "")
+    }
+
     var amountInput by remember(customer.balanceDebt, selectedInvoice) {
         mutableStateOf(
             if (selectedInvoice != null) {
@@ -3116,7 +3185,8 @@ private fun CustomerDebtPaymentDialog(
     var notesInput by remember(selectedInvoice) {
         mutableStateOf(
             if (selectedInvoice != null) {
-                "سداد فاتورة مبيعات #${selectedInvoice!!.invoiceId}"
+                val invCode = normalizeDebtInvoiceReference(selectedInvoice!!.invoiceId)
+                "سداد فاتورة مبيعات \u202A\u200E$invCode\u200E\u202C"
             } else {
                 "تحصيل دفعة نقدية من حساب المديونية"
             }
@@ -3175,10 +3245,11 @@ private fun CustomerDebtPaymentDialog(
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
-                        if (selectedInvoice != null) {
+                        if (selectedInvoice != null || manualInvoiceNumber.isNotBlank()) {
                             TextButton(
                                 onClick = {
                                     selectedInvoice = null
+                                    manualInvoiceNumber = ""
                                     notesInput = "تحصيل دفعة نقدية من حساب المديونية"
                                     if (customer.balanceDebt > 0) {
                                         amountInput = String.format(Locale.US, "%.2f", customer.balanceDebt)
@@ -3193,8 +3264,10 @@ private fun CustomerDebtPaymentDialog(
                     }
 
                     // Custom Expandable Invoice Selection Box
-                    val selectedTitle = selectedInvoice?.let { "فاتورة #${it.invoiceId} (${String.format(Locale.US, "%.2f", it.amount)} $currencySymbol)" }
-                        ?: if (invoiceOptions.isEmpty()) "لا توجد فواتير آجلة مسجلة للعميل" else "دفعة عامة لحساب المديونية (غير مرتبطة بفاتورة)"
+                    val selectedTitle = selectedInvoice?.let {
+                        val invCode = normalizeDebtInvoiceReference(it.invoiceId)
+                        "فاتورة \u202A\u200E$invCode\u200E\u202C (${String.format(Locale.US, "%.2f", it.amount)} $currencySymbol)"
+                    } ?: if (invoiceOptions.isEmpty()) "لا توجد فواتير آجلة مسجلة للعميل" else "دفعة عامة لحساب المديونية (غير مرتبطة بفاتورة)"
 
                     Surface(
                         shape = RoundedCornerShape(10.dp),
@@ -3333,13 +3406,15 @@ private fun CustomerDebtPaymentDialog(
                                             .padding(top = 4.dp)
                                             .clickable {
                                                 selectedInvoice = opt
+                                                manualInvoiceNumber = opt.invoiceId
                                                 val fillAmt = if (customer.balanceDebt > 0) {
                                                     opt.amount.coerceAtMost(customer.balanceDebt)
                                                 } else {
                                                     opt.amount
                                                 }
                                                 amountInput = String.format(Locale.US, "%.2f", fillAmt)
-                                                notesInput = "سداد فاتورة مبيعات #${opt.invoiceId}"
+                                                val invCode = normalizeDebtInvoiceReference(opt.invoiceId)
+                                                notesInput = "سداد فاتورة مبيعات \u202A\u200E$invCode\u200E\u202C"
                                                 isDropdownExpanded = false
                                             }
                                             .padding(vertical = 4.dp, horizontal = 6.dp)
@@ -3361,11 +3436,22 @@ private fun CustomerDebtPaymentDialog(
                                                     modifier = Modifier.size(17.dp)
                                                 )
                                                 Column(modifier = Modifier.weight(1f)) {
-                                                    Text(
-                                                        text = "فاتورة مبيعات #${opt.invoiceId}",
-                                                        fontSize = 12.sp,
-                                                        fontWeight = FontWeight.Bold
-                                                    )
+                                                    val invCode = normalizeDebtInvoiceReference(opt.invoiceId)
+                                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                                        Text(
+                                                            text = "فاتورة مبيعات ",
+                                                            fontSize = 12.sp,
+                                                            fontWeight = FontWeight.Bold
+                                                        )
+                                                        CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                                                            Text(
+                                                                text = invCode,
+                                                                fontSize = 12.sp,
+                                                                fontWeight = FontWeight.Bold,
+                                                                fontFamily = FontFamily.Monospace
+                                                            )
+                                                        }
+                                                    }
                                                     Text(
                                                         text = "$dateStr • ${opt.description}",
                                                         fontSize = 10.sp,
@@ -3440,6 +3526,52 @@ private fun CustomerDebtPaymentDialog(
                 }
 
                 OutlinedTextField(
+                    value = manualInvoiceNumber,
+                    onValueChange = { newVal ->
+                        manualInvoiceNumber = newVal
+                        val cleanId = newVal.trim().removePrefix("#")
+                        val matched = invoiceOptions.find {
+                            it.invoiceId.equals(cleanId, ignoreCase = true) ||
+                                it.invoiceId.equals(newVal.trim(), ignoreCase = true)
+                        }
+                        if (matched != null) {
+                            selectedInvoice = matched
+                            val invCode = normalizeDebtInvoiceReference(matched.invoiceId)
+                            notesInput = "سداد فاتورة مبيعات \u202A\u200E$invCode\u200E\u202C"
+                            val fillAmt = if (customer.balanceDebt > 0) matched.amount.coerceAtMost(customer.balanceDebt) else matched.amount
+                            amountInput = String.format(Locale.US, "%.2f", fillAmt)
+                        } else if (newVal.isNotBlank() && selectedInvoice == null) {
+                            val invCode = normalizeDebtInvoiceReference(cleanId)
+                            notesInput = "سداد فاتورة مبيعات \u202A\u200E$invCode\u200E\u202C"
+                        }
+                    },
+                    label = { Text("رقم الفاتورة المراد تسديد الدفعة منها (اختياري)") },
+                    placeholder = { Text("مثال: #2-280726 أو 1024") },
+                    leadingIcon = {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ReceiptLong,
+                            contentDescription = null,
+                            tint = if (manualInvoiceNumber.isNotBlank()) semantic.profitGreen else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    },
+                    trailingIcon = {
+                        if (manualInvoiceNumber.isNotBlank()) {
+                            IconButton(onClick = {
+                                manualInvoiceNumber = ""
+                                selectedInvoice = null
+                                notesInput = "تحصيل دفعة نقدية من حساب المديونية"
+                            }) {
+                                Icon(Icons.Default.Close, contentDescription = "مسح", modifier = Modifier.size(16.dp))
+                            }
+                        }
+                    },
+                    singleLine = true,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("customer_pay_invoice_ref_input")
+                )
+
+                OutlinedTextField(
                     value = amountInput,
                     onValueChange = { amountInput = it },
                     label = { Text("المبلغ المحصل ($currencySymbol)") },
@@ -3495,18 +3627,24 @@ private fun CustomerDebtPaymentDialog(
                                 color = if (remainingAfterPayment > 0.009) semantic.debtAmber else semantic.profitGreen
                             )
                         }
-                        if (selectedInvoice != null) {
+                        val effectiveInvDisplay = manualInvoiceNumber.trim().takeIf { it.isNotBlank() } ?: selectedInvoice?.invoiceId
+                        if (!effectiveInvDisplay.isNullOrBlank()) {
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Text("الفاتورة المحددة:", fontSize = 11.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                Text(
-                                    text = "#${selectedInvoice!!.invoiceId}",
-                                    fontSize = 11.5.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = semantic.profitGreen
-                                )
+                                Text("الفاتورة المحددة للسداد:", fontSize = 11.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                val invCode = normalizeDebtInvoiceReference(effectiveInvDisplay)
+                                CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                                    Text(
+                                        text = invCode,
+                                        fontSize = 11.5.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = semantic.profitGreen,
+                                        fontFamily = FontFamily.Monospace
+                                    )
+                                }
                             }
                         }
                     }
@@ -3514,12 +3652,14 @@ private fun CustomerDebtPaymentDialog(
             }
         },
         confirmButton = {
+            val rawTarget = manualInvoiceNumber.trim().takeIf { it.isNotBlank() } ?: selectedInvoice?.invoiceId
+            val effectiveInvToPass = normalizeDebtInvoiceReference(rawTarget).takeIf { it.isNotBlank() }
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 OutlinedButton(
                     onClick = {
                         val amt = amountInput.toDoubleOrNull() ?: 0.0
                         if (amt > 0.0) {
-                            onConfirmPayment(amt, notesInput.trim(), selectedInvoice?.invoiceId)
+                            onConfirmPayment(amt, notesInput.trim(), effectiveInvToPass)
                         }
                     },
                     shape = RoundedCornerShape(10.dp),
@@ -3539,7 +3679,7 @@ private fun CustomerDebtPaymentDialog(
                     onClick = {
                         val amt = amountInput.toDoubleOrNull() ?: 0.0
                         if (amt > 0.0) {
-                            onConfirmAndPrintReceipt(amt, notesInput.trim(), selectedInvoice?.invoiceId)
+                            onConfirmAndPrintReceipt(amt, notesInput.trim(), effectiveInvToPass)
                         }
                     },
                     shape = RoundedCornerShape(10.dp),
@@ -3600,11 +3740,25 @@ private fun SupplierDebtPaymentDialog(
         },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text(
-                    text = "فاتورة رقم: ${invoice.invoiceNumber}",
-                    fontSize = 12.5.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Start
+                ) {
+                    Text(
+                        text = "فاتورة رقم: ",
+                        fontSize = 12.5.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                        Text(
+                            text = normalizeDebtInvoiceReference(invoice.invoiceNumber),
+                            fontSize = 12.5.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontFamily = FontFamily.Monospace
+                        )
+                    }
+                }
                 Surface(
                     shape = RoundedCornerShape(12.dp),
                     color = semantic.debtAmber.copy(alpha = 0.14f),
@@ -3959,7 +4113,7 @@ private fun CustomerAccountStatementDialog(
                     } else {
                         items(transactions, key = { "stmt_tx_${it.id}" }) { tx ->
                             val isPay = tx.type == "PAYMENT"
-                            val dStr = SimpleDateFormat("yyyy-MM-dd hh:mm a", Locale.getDefault()).format(Date(tx.date))
+                            val dStr = SimpleDateFormat("yyyy-MM-dd hh:mm a", Locale.US).format(Date(tx.date)).toEnglishDigits()
                             Surface(
                                 shape = RoundedCornerShape(12.dp),
                                 color = semantic.cardSubtle,
@@ -4250,7 +4404,7 @@ private fun SupplierAccountStatementDialog(
             appendLine("*الرصيد المتبقي للمورد: ${String.format(Locale.US, "%.2f", totalRemaining)} $currencySymbol*")
             appendLine("────────────────────")
             invoices.forEach { inv ->
-                val d = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date(inv.dateMillis))
+                val d = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date(inv.dateMillis)).toEnglishDigits()
                 appendLine("• [${inv.invoiceNumber} - $d] الإجمالي: ${inv.totalCost} | المدفوع: ${inv.paidAmount} | المتبقي: ${inv.remainingDebt} $currencySymbol")
             }
         }
@@ -4370,7 +4524,7 @@ private fun SupplierAccountStatementDialog(
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     items(invoices, key = { "sup_stmt_${it.id}" }) { inv ->
-                        val dStr = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date(inv.dateMillis))
+                        val dStr = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date(inv.dateMillis)).toEnglishDigits()
                         Surface(
                             shape = RoundedCornerShape(12.dp),
                             color = semantic.cardSubtle,
@@ -4567,7 +4721,7 @@ private fun SupplierInvoiceDetailsPreviewDialog(
     val semantic = LocalAFStoreSemanticColors.current
     val items = remember(invoice.itemsJson) { invoice.getItems() }
     val dateStr = remember(invoice.dateMillis) {
-        SimpleDateFormat("yyyy-MM-dd • hh:mm a", Locale.getDefault()).format(Date(invoice.dateMillis))
+        SimpleDateFormat("yyyy-MM-dd • hh:mm a", Locale.US).format(Date(invoice.dateMillis)).toEnglishDigits()
     }
     val hasDebt = invoice.remainingDebt > 0.009
 
@@ -4846,33 +5000,58 @@ internal fun DebtPaymentReceiptDialog(
     val storeLogoCustomText by viewModel.storeLogoCustomText.collectAsState()
     val isCustomer = receipt.partyType == "CUSTOMER"
     val dateFormatted = remember(receipt.timestampMillis) {
-        SimpleDateFormat("yyyy-MM-dd • hh:mm a", Locale.getDefault()).format(Date(receipt.timestampMillis))
+        val cal = Calendar.getInstance().apply { timeInMillis = receipt.timestampMillis }
+        val timeStr = SimpleDateFormat("hh:mm", Locale.US).format(cal.time).toEnglishDigits()
+        val amPm = if (cal.get(Calendar.AM_PM) == Calendar.AM) "ص" else "م"
+        val dateStr = SimpleDateFormat("dd-MM-yyyy", Locale.US).format(cal.time).toEnglishDigits()
+        "$timeStr $amPm • $dateStr"
+    }
+    val displayReceiptNum = remember(receipt.receiptNumber) {
+        if (receipt.receiptNumber.startsWith("#") || receipt.receiptNumber.startsWith("Pay")) {
+            receipt.receiptNumber
+        } else {
+            "Pay #${receipt.receiptNumber}"
+        }
     }
     val isFullyCleared = receipt.remainingBalance <= 0.009
 
-    val shareText = remember(receipt, storeName, storePhone, currencySymbol, dateFormatted) {
+    val displayNotes = remember(receipt.notes) {
+        sanitizeNotesDebtInvoiceRef(receipt.notes)
+    }
+    val displayFooter = remember(footerText) {
+        if (footerText.isBlank()) {
+            "شكراً لتعاملكم معنا"
+        } else {
+            footerText
+        }
+    }
+    val rawInvoiceCode = remember(receipt.invoiceReference) {
+        normalizeDebtInvoiceReference(receipt.invoiceReference).takeIf { it.isNotBlank() }
+    }
+
+    val shareText = remember(receipt, storeName, storePhone, currencySymbol, dateFormatted, displayReceiptNum, rawInvoiceCode, displayNotes, displayFooter) {
         buildString {
             appendLine("🧾 *${if (isCustomer) "وصل سداد مديونية عميل (سند قبض)" else "وصل سداد مستحقات مورد (سند صرف)"}*")
             appendLine("🏪 *$storeName*")
-            if (storePhone.isNotBlank()) appendLine("📞 هاتف المتجر: $storePhone")
+            if (storePhone.isNotBlank()) appendLine("📞 هاتف: $storePhone")
             appendLine("────────────────────")
-            appendLine("رقم الوصل: #${receipt.receiptNumber}")
+            appendLine("رقم الوصل: $displayReceiptNum")
+            if (rawInvoiceCode != null) {
+                appendLine("رقم الفاتورة: \u202A\u200E$rawInvoiceCode\u200E\u202C")
+            }
             appendLine("التاريخ: $dateFormatted")
             appendLine("${if (isCustomer) "العميل" else "المورد"}: *${receipt.partyName}*")
-            if (receipt.partyPhone.isNotBlank()) appendLine("رقم الهاتف: ${receipt.partyPhone}")
+            if (receipt.partyPhone.isNotBlank()) appendLine("الهاتف: ${receipt.partyPhone}")
             appendLine("────────────────────")
-            appendLine("• الرصيد السابق: ${String.format(Locale.US, "%.2f", receipt.previousBalance)} $currencySymbol")
-            appendLine("• *المبلغ المسدد: ${String.format(Locale.US, "%.2f", receipt.paidAmount)} $currencySymbol* ✅")
-            appendLine("• *الرصيد المتبقي: ${String.format(Locale.US, "%.2f", receipt.remainingBalance)} $currencySymbol*")
-            appendLine("حالة الذمة: ${if (isFullyCleared) "خالص الذمة بالكامل ✅" else "متبقي ذمة مالية"}")
-            if (!receipt.invoiceReference.isNullOrBlank()) {
-                appendLine("الفاتورة المسددة: #${receipt.invoiceReference}")
-            }
-            if (receipt.notes.isNotBlank()) {
-                appendLine("البيان: ${receipt.notes}")
+            appendLine("• الرصيد السابق قبل الدفعة: ${String.format(Locale.US, "%.2f", receipt.previousBalance)} $currencySymbol")
+            appendLine("• *المبلغ المسدد (الدفعة الحالية): ${String.format(Locale.US, "%.2f", receipt.paidAmount)} $currencySymbol*")
+            appendLine("• *الرصيد المتبقي بعد السداد: ${String.format(Locale.US, "%.2f", receipt.remainingBalance)} $currencySymbol*")
+            appendLine("الحالة: ${if (isFullyCleared) "خالص الذمة ✓" else "سداد جزئي"}")
+            if (displayNotes.isNotBlank()) {
+                appendLine("البيان: $displayNotes")
             }
             appendLine("────────────────────")
-            if (footerText.isNotBlank()) appendLine(footerText)
+            if (displayFooter.isNotBlank()) appendLine(displayFooter)
         }
     }
 
@@ -4886,7 +5065,8 @@ internal fun DebtPaymentReceiptDialog(
             border = BorderStroke(1.2.dp, semantic.cardBorder),
             modifier = Modifier
                 .fillMaxWidth(0.95f)
-                .heightIn(max = 720.dp)
+                .heightIn(max = 740.dp)
+                .padding(vertical = 20.dp, horizontal = 8.dp)
                 .testTag("debt_payment_receipt_dialog")
         ) {
             Column(
@@ -4907,26 +5087,27 @@ internal fun DebtPaymentReceiptDialog(
                     ) {
                         Surface(
                             shape = RoundedCornerShape(12.dp),
-                            color = semantic.profitGreen.copy(alpha = 0.16f),
-                            border = BorderStroke(1.dp, semantic.profitGreen),
+                            color = Color(0xFF0F172A).copy(alpha = 0.08f),
+                            border = BorderStroke(1.dp, Color(0xFF0F172A)),
                             modifier = Modifier.size(42.dp)
                         ) {
                             Box(contentAlignment = Alignment.Center) {
                                 Icon(
                                     imageVector = Icons.Default.Print,
                                     contentDescription = null,
-                                    tint = semantic.profitGreen
+                                    tint = Color(0xFF0F172A)
                                 )
                             }
                         }
                         Column {
                             Text(
-                                text = "معاينة وطباعة وصل سداد الدين",
+                                text = if (isCustomer) "معاينة وطباعة وصل سداد الدين" else "معاينة وطباعة وصل سداد المستحقات",
                                 fontWeight = FontWeight.ExtraBold,
-                                fontSize = 16.sp
+                                fontSize = 16.sp,
+                                color = MaterialTheme.colorScheme.onSurface
                             )
                             Text(
-                                text = "رقم السند: #${receipt.receiptNumber} • جاهز للطباعة الحرارية أو PDF",
+                                text = "رقم السند: $displayReceiptNum • جاهز للطباعة الحرارية أو PDF",
                                 fontSize = 11.5.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -4938,7 +5119,7 @@ internal fun DebtPaymentReceiptDialog(
                     }
                 }
 
-                // Printable White Paper Receipt Card
+                // Printable White Paper Receipt Card (All text strictly in Black Color 0xFF0F172A)
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -4994,54 +5175,83 @@ internal fun DebtPaymentReceiptDialog(
                                 }
                             }
 
-                            // Voucher Title Badge
+                            // Voucher Title Badge - Clean Neutral with Solid Black Text
                             Surface(
                                 shape = RoundedCornerShape(8.dp),
-                                color = Color(0xFFECFDF5),
-                                border = BorderStroke(1.dp, Color(0xFF10B981))
+                                color = Color(0xFFF1F5F9),
+                                border = BorderStroke(1.2.dp, Color(0xFF0F172A))
                             ) {
                                 Text(
                                     text = if (isCustomer) "وصل سداد مديونية عميل (سند قبض نقدية)" else "وصل سداد مستحقات مورد (سند صرف نقدية)",
                                     fontWeight = FontWeight.ExtraBold,
                                     fontSize = 13.sp,
-                                    color = Color(0xFF047857),
-                                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 5.dp)
+                                    color = Color(0xFF0F172A),
+                                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
                                 )
                             }
 
-                            // Metadata Grid
+                            // Metadata Grid - All Black Text in Arabic, Numbers 1234
                             Surface(
                                 shape = RoundedCornerShape(10.dp),
                                 color = Color(0xFFF8FAFC),
-                                border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
+                                border = BorderStroke(1.dp, Color(0xFFCBD5E1)),
                                 modifier = Modifier.fillMaxWidth()
                             ) {
                                 Column(
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .padding(10.dp),
-                                    verticalArrangement = Arrangement.spacedBy(5.dp)
+                                    verticalArrangement = Arrangement.spacedBy(6.dp)
                                 ) {
                                     Row(
                                         modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.SpaceBetween
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.Top
                                     ) {
-                                        Text(
-                                            text = "رقم الوصل: #${receipt.receiptNumber}",
-                                            fontSize = 11.5.sp,
-                                            fontWeight = FontWeight.ExtraBold,
-                                            color = Color(0xFF0F172A),
-                                            fontFamily = FontFamily.Monospace
-                                        )
-                                        Text(
-                                            text = dateFormatted,
-                                            fontSize = 11.sp,
-                                            fontWeight = FontWeight.SemiBold,
-                                            color = Color(0xFF475569)
-                                        )
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                text = "رقم الوصل: $displayReceiptNum",
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.ExtraBold,
+                                                color = Color(0xFF0F172A),
+                                                fontFamily = FontFamily.Monospace
+                                            )
+                                            if (rawInvoiceCode != null) {
+                                                Spacer(modifier = Modifier.height(3.dp))
+                                                Row(
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    horizontalArrangement = Arrangement.Start
+                                                ) {
+                                                    Text(
+                                                        text = "رقم الفاتورة: ",
+                                                        fontSize = 11.5.sp,
+                                                        fontWeight = FontWeight.Bold,
+                                                        color = Color(0xFF0F172A)
+                                                    )
+                                                    CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                                                        Text(
+                                                            text = rawInvoiceCode,
+                                                            fontSize = 11.5.sp,
+                                                            fontWeight = FontWeight.ExtraBold,
+                                                            color = Color(0xFF0F172A),
+                                                            fontFamily = FontFamily.Monospace
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                                            Text(
+                                                text = dateFormatted,
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = Color(0xFF0F172A),
+                                                fontFamily = FontFamily.Monospace
+                                            )
+                                        }
                                     }
 
-                                    HorizontalDivider(color = Color(0xFFE2E8F0))
+                                    HorizontalDivider(color = Color(0xFFCBD5E1))
 
                                     Row(
                                         modifier = Modifier.fillMaxWidth(),
@@ -5051,7 +5261,7 @@ internal fun DebtPaymentReceiptDialog(
                                             text = if (isCustomer) "اسم العميل:" else "اسم المورد:",
                                             fontSize = 12.sp,
                                             fontWeight = FontWeight.Bold,
-                                            color = Color(0xFF475569)
+                                            color = Color(0xFF0F172A)
                                         )
                                         Text(
                                             text = receipt.partyName,
@@ -5069,14 +5279,15 @@ internal fun DebtPaymentReceiptDialog(
                                             Text(
                                                 text = "رقم الهاتف:",
                                                 fontSize = 11.5.sp,
-                                                fontWeight = FontWeight.SemiBold,
-                                                color = Color(0xFF64748B)
+                                                fontWeight = FontWeight.Bold,
+                                                color = Color(0xFF0F172A)
                                             )
                                             Text(
-                                                text = receipt.partyPhone,
+                                                text = receipt.partyPhone.toEnglishDigits(),
                                                 fontSize = 12.sp,
                                                 fontWeight = FontWeight.Bold,
-                                                color = Color(0xFF1E293B)
+                                                color = Color(0xFF0F172A),
+                                                fontFamily = FontFamily.Monospace
                                             )
                                         }
                                     }
@@ -5088,41 +5299,20 @@ internal fun DebtPaymentReceiptDialog(
                                         Text(
                                             text = "المسؤول / الكاشير:",
                                             fontSize = 11.5.sp,
-                                            fontWeight = FontWeight.SemiBold,
-                                            color = Color(0xFF64748B)
+                                            fontWeight = FontWeight.Bold,
+                                            color = Color(0xFF0F172A)
                                         )
                                         Text(
                                             text = cashierName,
                                             fontSize = 11.5.sp,
                                             fontWeight = FontWeight.Bold,
-                                            color = Color(0xFF1E293B)
+                                            color = Color(0xFF0F172A)
                                         )
-                                    }
-
-                                    if (!receipt.invoiceReference.isNullOrBlank()) {
-                                        Row(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            horizontalArrangement = Arrangement.SpaceBetween
-                                        ) {
-                                            Text(
-                                                text = "الفاتورة المسددة:",
-                                                fontSize = 11.5.sp,
-                                                fontWeight = FontWeight.Bold,
-                                                color = Color(0xFF047857)
-                                            )
-                                            Text(
-                                                text = "#${receipt.invoiceReference}",
-                                                fontSize = 12.sp,
-                                                fontWeight = FontWeight.ExtraBold,
-                                                color = Color(0xFF047857),
-                                                fontFamily = FontFamily.Monospace
-                                            )
-                                        }
                                     }
                                 }
                             }
 
-                            // 3-Row Balance Breakdown Table (Previous -> Paid -> Remaining)
+                            // 3-Row Balance Breakdown Table - All Black Text in Arabic, Numbers 1234
                             Surface(
                                 shape = RoundedCornerShape(12.dp),
                                 color = Color(0xFFF8FAFC),
@@ -5135,7 +5325,7 @@ internal fun DebtPaymentReceiptDialog(
                                         .padding(12.dp),
                                     verticalArrangement = Arrangement.spacedBy(8.dp)
                                 ) {
-                                    // 1. Previous Debt Balance
+                                    // 1. Previous Debt Balance (Solid Black)
                                     Row(
                                         modifier = Modifier.fillMaxWidth(),
                                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -5145,23 +5335,24 @@ internal fun DebtPaymentReceiptDialog(
                                             text = "الرصيد السابق قبل الدفعة:",
                                             fontSize = 12.5.sp,
                                             fontWeight = FontWeight.Bold,
-                                            color = Color(0xFF334155)
+                                            color = Color(0xFF0F172A)
                                         )
                                         Text(
-                                            text = "${String.format(Locale.US, "%.2f", receipt.previousBalance)} $currencySymbol",
+                                            text = "${String.format(Locale.US, "%.2f", receipt.previousBalance).toEnglishDigits()} $currencySymbol",
                                             fontSize = 13.5.sp,
                                             fontWeight = FontWeight.ExtraBold,
-                                            color = Color(0xFFDC2626)
+                                            color = Color(0xFF0F172A),
+                                            fontFamily = FontFamily.Monospace
                                         )
                                     }
 
                                     HorizontalDivider(color = Color(0xFFE2E8F0))
 
-                                    // 2. Paid Amount (Highlighted Box)
+                                    // 2. Paid Amount (Black Border, Solid Black Text)
                                     Surface(
                                         shape = RoundedCornerShape(10.dp),
-                                        color = Color(0xFFECFDF5),
-                                        border = BorderStroke(1.dp, Color(0xFF10B981)),
+                                        color = Color(0xFFF8FAFC),
+                                        border = BorderStroke(1.2.dp, Color(0xFF0F172A)),
                                         modifier = Modifier.fillMaxWidth()
                                     ) {
                                         Row(
@@ -5175,20 +5366,21 @@ internal fun DebtPaymentReceiptDialog(
                                                 text = "المبلغ المسدد (الدفعة الحالية):",
                                                 fontSize = 13.sp,
                                                 fontWeight = FontWeight.ExtraBold,
-                                                color = Color(0xFF065F46)
+                                                color = Color(0xFF0F172A)
                                             )
                                             Text(
-                                                text = "${String.format(Locale.US, "%.2f", receipt.paidAmount)} $currencySymbol",
+                                                text = "${String.format(Locale.US, "%.2f", receipt.paidAmount).toEnglishDigits()} $currencySymbol",
                                                 fontSize = 16.sp,
                                                 fontWeight = FontWeight.ExtraBold,
-                                                color = Color(0xFF059669)
+                                                color = Color(0xFF0F172A),
+                                                fontFamily = FontFamily.Monospace
                                             )
                                         }
                                     }
 
                                     HorizontalDivider(color = Color(0xFFE2E8F0))
 
-                                    // 3. Remaining Debt Balance
+                                    // 3. Remaining Debt Balance (Solid Black)
                                     Row(
                                         modifier = Modifier.fillMaxWidth(),
                                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -5201,41 +5393,40 @@ internal fun DebtPaymentReceiptDialog(
                                             color = Color(0xFF0F172A)
                                         )
                                         Text(
-                                            text = "${String.format(Locale.US, "%.2f", receipt.remainingBalance)} $currencySymbol",
+                                            text = "${String.format(Locale.US, "%.2f", receipt.remainingBalance).toEnglishDigits()} $currencySymbol",
                                             fontSize = 15.sp,
                                             fontWeight = FontWeight.ExtraBold,
-                                            color = if (isFullyCleared) Color(0xFF059669) else Color(0xFFD97706)
+                                            color = Color(0xFF0F172A),
+                                            fontFamily = FontFamily.Monospace
                                         )
                                     }
                                 }
                             }
 
-                            // Status Stamp & Notes
+                            // Status Stamp & Description (Solid Black in Arabic)
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Text(
-                                    text = "البيان: ${receipt.notes}",
+                                    text = "البيان: $displayNotes",
                                     fontSize = 11.5.sp,
-                                    color = Color(0xFF475569),
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = Color(0xFF0F172A),
                                     modifier = Modifier.weight(1f)
                                 )
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Surface(
                                     shape = RoundedCornerShape(6.dp),
-                                    color = if (isFullyCleared) Color(0xFFDCFCE7) else Color(0xFFFEF3C7),
-                                    border = BorderStroke(
-                                        1.dp,
-                                        if (isFullyCleared) Color(0xFF16A34A) else Color(0xFFD97706)
-                                    )
+                                    color = Color(0xFFF1F5F9),
+                                    border = BorderStroke(1.dp, Color(0xFF0F172A))
                                 ) {
                                     Text(
-                                        text = if (isFullyCleared) "خالص الذمة ✅" else "دفعة جزئية",
+                                        text = if (isFullyCleared) "خالص الذمة ✓" else "سداد جزئي",
                                         fontSize = 10.5.sp,
                                         fontWeight = FontWeight.ExtraBold,
-                                        color = if (isFullyCleared) Color(0xFF15803D) else Color(0xFFB45309),
+                                        color = Color(0xFF0F172A),
                                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
                                     )
                                 }
@@ -5251,28 +5442,28 @@ internal fun DebtPaymentReceiptDialog(
                                 horizontalArrangement = Arrangement.SpaceBetween
                             ) {
                                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                    Text("توقيع المستلم", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFF475569))
+                                    Text("توقيع المستلم", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0F172A))
                                     Spacer(modifier = Modifier.height(14.dp))
-                                    Text("....................", fontSize = 11.sp, color = Color(0xFF94A3B8))
+                                    Text("....................", fontSize = 11.sp, color = Color(0xFF64748B))
                                 }
                                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                     Text(
                                         text = if (isCustomer) "توقيع العميل" else "توقيع المورد",
                                         fontSize = 11.sp,
                                         fontWeight = FontWeight.Bold,
-                                        color = Color(0xFF475569)
+                                        color = Color(0xFF0F172A)
                                     )
                                     Spacer(modifier = Modifier.height(14.dp))
-                                    Text("....................", fontSize = 11.sp, color = Color(0xFF94A3B8))
+                                    Text("....................", fontSize = 11.sp, color = Color(0xFF64748B))
                                 }
                             }
 
-                            if (footerText.isNotBlank()) {
+                            if (displayFooter.isNotBlank()) {
                                 Text(
-                                    text = footerText,
+                                    text = displayFooter,
                                     fontSize = 11.sp,
                                     fontWeight = FontWeight.SemiBold,
-                                    color = Color(0xFF64748B),
+                                    color = Color(0xFF0F172A),
                                     textAlign = TextAlign.Center
                                 )
                             }
@@ -5282,7 +5473,9 @@ internal fun DebtPaymentReceiptDialog(
 
                 // Primary Print Buttons (Thermal Bluetooth + System PDF Print)
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 2.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     Button(
@@ -5292,9 +5485,9 @@ internal fun DebtPaymentReceiptDialog(
                                 storePhone = storePhone,
                                 customerName = "${if (isCustomer) "العميل" else "المورد"}: ${receipt.partyName}",
                                 cashierName = cashierName,
-                                invoiceNumber = receipt.receiptNumber,
+                                invoiceNumber = displayReceiptNum,
                                 dateTimeFormatted = dateFormatted,
-                                paymentMethodAr = if (isCustomer) "وصل سداد مديونية عميل" else "وصل سداد مستحقات مورد",
+                                paymentMethodAr = if (isCustomer) "وصل سداد مديونية عميل (سند قبض)" else "وصل سداد مستحقات مورد (سند صرف)",
                                 storeLogoImagePath = storeLogoImagePath,
                                 storeLogoCustomText = storeLogoCustomText,
                                 lines = listOf(
@@ -5352,22 +5545,40 @@ internal fun DebtPaymentReceiptDialog(
                                 creditAmount = receipt.remainingBalance,
                                 especesAmount = receipt.paidAmount,
                                 currency = currencySymbol,
-                                footerText = "${receipt.notes}\n$footerText".trim(),
+                                footerText = "${displayNotes}\n$displayFooter".trim(),
                                 developerContact = developerContact,
                                 isTestReceipt = false
                             )
                             viewModel.printThermalReceiptPayload(payload)
                         },
                         shape = RoundedCornerShape(12.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = semantic.profitGreen),
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0F172A)),
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
                         modifier = Modifier
                             .weight(1f)
-                            .height(44.dp)
+                            .height(48.dp)
                             .testTag("print_debt_receipt_thermal_btn")
                     ) {
-                        Icon(Icons.Default.Print, contentDescription = null, tint = Color.White, modifier = Modifier.size(17.dp))
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("طباعة حرارية (بلوتوث)", fontWeight = FontWeight.ExtraBold, fontSize = 12.5.sp, color = Color.White)
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.Center
+                        ) {
+                            Icon(
+                                Icons.Default.Print,
+                                contentDescription = null,
+                                tint = Color.White,
+                                modifier = Modifier
+                                    .size(19.dp)
+                                    .offset(y = (-1).dp)
+                            )
+                            Spacer(modifier = Modifier.width(7.dp))
+                            Text(
+                                text = "طباعة حرارية",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 13.sp,
+                                color = Color.White
+                            )
+                        }
                     }
 
                     Button(
@@ -5384,14 +5595,32 @@ internal fun DebtPaymentReceiptDialog(
                         },
                         shape = RoundedCornerShape(12.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
                         modifier = Modifier
                             .weight(1f)
-                            .height(44.dp)
+                            .height(48.dp)
                             .testTag("print_debt_receipt_pdf_btn")
                     ) {
-                        Icon(Icons.AutoMirrored.Filled.ReceiptLong, contentDescription = null, tint = Color.White, modifier = Modifier.size(17.dp))
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("طباعة / حفظ PDF", fontWeight = FontWeight.ExtraBold, fontSize = 12.5.sp, color = Color.White)
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.Center
+                        ) {
+                            Icon(
+                                Icons.AutoMirrored.Filled.ReceiptLong,
+                                contentDescription = null,
+                                tint = Color.White,
+                                modifier = Modifier
+                                    .size(19.dp)
+                                    .offset(y = (-1).dp)
+                            )
+                            Spacer(modifier = Modifier.width(7.dp))
+                            Text(
+                                text = "طباعة / حفظ PDF",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 13.sp,
+                                color = Color.White
+                            )
+                        }
                     }
                 }
 
@@ -5410,12 +5639,23 @@ internal fun DebtPaymentReceiptDialog(
                         },
                         shape = RoundedCornerShape(10.dp),
                         border = BorderStroke(1.dp, Color(0xFF16A34A)),
-                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
-                        modifier = Modifier.weight(1.1f)
+                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 4.dp),
+                        modifier = Modifier
+                            .weight(1.05f)
+                            .height(42.dp)
                     ) {
-                        Icon(Icons.Default.Share, contentDescription = null, tint = Color(0xFF16A34A), modifier = Modifier.size(14.dp))
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text("واتساب", fontSize = 11.5.sp, fontWeight = FontWeight.ExtraBold, color = Color(0xFF16A34A))
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                Icons.Default.Share,
+                                contentDescription = null,
+                                tint = Color(0xFF16A34A),
+                                modifier = Modifier
+                                    .size(15.dp)
+                                    .offset(y = (-1).dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("واتساب", fontSize = 11.5.sp, fontWeight = FontWeight.ExtraBold, color = Color(0xFF16A34A))
+                        }
                     }
 
                     OutlinedButton(
@@ -5427,12 +5667,23 @@ internal fun DebtPaymentReceiptDialog(
                         },
                         shape = RoundedCornerShape(10.dp),
                         border = BorderStroke(1.dp, Color(0xFF0084FF)),
-                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
-                        modifier = Modifier.weight(1.1f)
+                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 4.dp),
+                        modifier = Modifier
+                            .weight(1.05f)
+                            .height(42.dp)
                     ) {
-                        Icon(Icons.Default.Share, contentDescription = null, tint = Color(0xFF0084FF), modifier = Modifier.size(14.dp))
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text("ماسنجر", fontSize = 11.5.sp, fontWeight = FontWeight.ExtraBold, color = Color(0xFF0084FF))
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                Icons.Default.Share,
+                                contentDescription = null,
+                                tint = Color(0xFF0084FF),
+                                modifier = Modifier
+                                    .size(15.dp)
+                                    .offset(y = (-1).dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("ماسنجر", fontSize = 11.5.sp, fontWeight = FontWeight.ExtraBold, color = Color(0xFF0084FF))
+                        }
                     }
 
                     OutlinedButton(
@@ -5442,12 +5693,22 @@ internal fun DebtPaymentReceiptDialog(
                             Toast.makeText(context, "تم نسخ تفاصيل وصل السداد للحافظة ✅", Toast.LENGTH_SHORT).show()
                         },
                         shape = RoundedCornerShape(10.dp),
-                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
-                        modifier = Modifier.weight(0.9f)
+                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 4.dp),
+                        modifier = Modifier
+                            .weight(1.1f)
+                            .height(42.dp)
                     ) {
-                        Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(14.dp))
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text("نسخ السند", fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                Icons.Default.ContentCopy,
+                                contentDescription = null,
+                                modifier = Modifier
+                                    .size(15.dp)
+                                    .offset(y = (-1).dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("نسخ السند", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        }
                     }
                 }
             }
@@ -5466,7 +5727,7 @@ internal fun buildCustomerStatementShareMessage(
     val cleanStore = storeName.ifBlank { "المتجر" }
     val totalDebtsAdded = transactions.filter { it.type != "PAYMENT" }.sumOf { it.amount }
     val totalPaymentsPaid = transactions.filter { it.type == "PAYMENT" }.sumOf { it.amount }
-    val nowStr = SimpleDateFormat("yyyy-MM-dd hh:mm a", Locale.getDefault()).format(Date())
+    val nowStr = SimpleDateFormat("yyyy-MM-dd hh:mm a", Locale.US).format(Date()).toEnglishDigits()
 
     return buildString {
         appendLine("📋 *كشف حساب ومديونية عميل*")
@@ -5491,7 +5752,7 @@ internal fun buildCustomerStatementShareMessage(
         } else {
             appendLine("📑 *آخر الحركات (${transactions.take(15).size}):*")
             transactions.take(15).forEach { tx ->
-                val d = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date(tx.date))
+                val d = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date(tx.date)).toEnglishDigits()
                 val kind = if (tx.type == "PAYMENT") "✓ سداد دفعة (-)" else "+ فاتورة / دين"
                 val notePart = if (tx.notes.isNotBlank()) " — ${tx.notes}" else ""
                 appendLine("• [$d] $kind: ${String.format(Locale.US, "%.2f", tx.amount)} $currencySymbol$notePart")
@@ -5515,7 +5776,7 @@ internal fun buildCustomerInvoiceShareMessage(
 ): String {
     val cleanStore = storeName.ifBlank { "المتجر" }
     val dateMillis = invoice?.dateMillis ?: transaction?.date ?: System.currentTimeMillis()
-    val dateStr = SimpleDateFormat("yyyy-MM-dd hh:mm a", Locale.getDefault()).format(Date(dateMillis))
+    val dateStr = SimpleDateFormat("yyyy-MM-dd hh:mm a", Locale.US).format(Date(dateMillis)).toEnglishDigits()
     val isPayment = transaction?.type == "PAYMENT" || invoice?.paymentMethod == "CASH" && transaction?.type == "PAYMENT"
 
     return buildString {
@@ -5529,7 +5790,8 @@ internal fun buildCustomerInvoiceShareMessage(
         appendLine("👤 *العميل:* ${customer.name}")
         if (customer.phone.isNotBlank()) appendLine("📱 *الهاتف:* ${customer.phone}")
         if (invoice != null) {
-            appendLine("🔢 *رقم الفاتورة / السند:* #${invoice.invoiceId}")
+            val invCode = if (invoice.invoiceId.startsWith("#") || invoice.invoiceId.startsWith("Pre")) invoice.invoiceId else "#${invoice.invoiceId}"
+            appendLine("🔢 *رقم الفاتورة / السند:* $invCode")
         }
         appendLine("📅 *التاريخ:* $dateStr")
         appendLine("────────────────────")
@@ -6012,9 +6274,14 @@ private fun printDebtReceiptViaSystemPrintManager(
         return
     }
 
-    val jobName = "Receipt_${receipt.receiptNumber}"
+    val displayReceiptNum = if (receipt.receiptNumber.startsWith("#") || receipt.receiptNumber.startsWith("Pay")) {
+        receipt.receiptNumber
+    } else {
+        "Pay #${receipt.receiptNumber}"
+    }
+    val jobName = "Receipt_${displayReceiptNum.replace(" ", "_")}"
     val isCustomer = receipt.partyType == "CUSTOMER"
-    val dateFormatted = SimpleDateFormat("yyyy-MM-dd hh:mm a", Locale.getDefault()).format(Date(receipt.timestampMillis))
+    val dateFormatted = SimpleDateFormat("dd-MM-yyyy • HH:mm", Locale.US).format(Date(receipt.timestampMillis))
 
     printManager.print(
         jobName,
@@ -6063,13 +6330,13 @@ private fun printDebtReceiptViaSystemPrintManager(
                         textAlign = Paint.Align.CENTER
                     }
                     val subHeaderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                        color = android.graphics.Color.rgb(4, 120, 87)
+                        color = android.graphics.Color.rgb(15, 23, 42)
                         textSize = 15f
                         typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
                         textAlign = Paint.Align.CENTER
                     }
                     val labelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                        color = android.graphics.Color.rgb(71, 85, 105)
+                        color = android.graphics.Color.rgb(15, 23, 42)
                         textSize = 13f
                         typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
                         textAlign = Paint.Align.RIGHT
@@ -6081,7 +6348,7 @@ private fun printDebtReceiptViaSystemPrintManager(
                         textAlign = Paint.Align.LEFT
                     }
                     val greenValuePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                        color = android.graphics.Color.rgb(5, 150, 105)
+                        color = android.graphics.Color.rgb(15, 23, 42)
                         textSize = 16f
                         typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
                         textAlign = Paint.Align.LEFT
@@ -6119,7 +6386,12 @@ private fun printDebtReceiptViaSystemPrintManager(
                     canvas.drawText(storeName.ifBlank { "المتجر" }, centerX, y, titlePaint)
                     if (storePhone.isNotBlank()) {
                         y += 22f
-                        val phonePaint = Paint(labelPaint).apply { textAlign = Paint.Align.CENTER }
+                        val phonePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                            color = android.graphics.Color.rgb(15, 23, 42)
+                            textSize = 12f
+                            typeface = Typeface.create(Typeface.DEFAULT, Typeface.NORMAL)
+                            textAlign = Paint.Align.CENTER
+                        }
                         canvas.drawText("هاتف: $storePhone", centerX, y, phonePaint)
                     }
 
@@ -6135,8 +6407,14 @@ private fun printDebtReceiptViaSystemPrintManager(
                     canvas.drawLine(leftEdge + 20f, y, rightEdge - 20f, y, borderPaint)
 
                     y += 28f
-                    canvas.drawText("رقم السند: #${receipt.receiptNumber}", rightEdge - 24f, y, labelPaint)
+                    canvas.drawText("رقم السند: $displayReceiptNum", rightEdge - 24f, y, labelPaint)
                     canvas.drawText("التاريخ: $dateFormatted", leftEdge + 24f, y, valuePaint)
+
+                    val formattedPdfInvoiceRef = normalizeDebtInvoiceReference(receipt.invoiceReference).takeIf { it.isNotBlank() }
+                    if (formattedPdfInvoiceRef != null) {
+                        y += 22f
+                        canvas.drawText("رقم الفاتورة: \u202A\u200E$formattedPdfInvoiceRef\u200E\u202C", rightEdge - 24f, y, labelPaint)
+                    }
 
                     y += 28f
                     canvas.drawText(
@@ -6187,11 +6465,8 @@ private fun printDebtReceiptViaSystemPrintManager(
                     )
 
                     y = boxBottom + 34f
-                    if (!receipt.invoiceReference.isNullOrBlank()) {
-                        canvas.drawText("الفاتورة المسددة: #${receipt.invoiceReference}", rightEdge - 24f, y, labelPaint)
-                        y += 24f
-                    }
-                    canvas.drawText("البيان / الملاحظات: ${receipt.notes}", rightEdge - 24f, y, labelPaint)
+                    val cleanPdfNotes = sanitizeNotesDebtInvoiceRef(receipt.notes)
+                    canvas.drawText("البيان: $cleanPdfNotes", rightEdge - 24f, y, labelPaint)
 
                     y += 65f
                     canvas.drawText("توقيع المستلم: ........................", rightEdge - 36f, y, labelPaint)
@@ -6202,11 +6477,10 @@ private fun printDebtReceiptViaSystemPrintManager(
                         valuePaint
                     )
 
-                    if (footerText.isNotBlank()) {
-                        y += 48f
-                        val footerPaint = Paint(labelPaint).apply { textAlign = Paint.Align.CENTER }
-                        canvas.drawText(footerText, centerX, y, footerPaint)
-                    }
+                    val cleanFooter = if (footerText.isNotBlank()) footerText else "شكراً لتعاملكم معنا"
+                    y += 48f
+                    val footerPaint = Paint(labelPaint).apply { textAlign = Paint.Align.CENTER }
+                    canvas.drawText(cleanFooter, centerX, y, footerPaint)
 
                     pdfDoc.finishPage(page)
                     FileOutputStream(destination.fileDescriptor).use { out ->
@@ -6244,7 +6518,7 @@ private fun printCustomerStatementViaSystemPrintManager(
 
     val safeCustName = customer.name.replace(Regex("[^\\p{L}\\p{N}_-]+"), "_").ifBlank { "Customer" }
     val jobName = "Customer_Statement_${safeCustName}_${System.currentTimeMillis() / 1000}"
-    val issueDateStr = SimpleDateFormat("yyyy-MM-dd hh:mm a", Locale.getDefault()).format(Date())
+    val issueDateStr = SimpleDateFormat("yyyy-MM-dd hh:mm a", Locale.US).format(Date()).toEnglishDigits()
     val totalDebtsAdded = transactions.filter { it.type != "PAYMENT" }.sumOf { it.amount }
     val totalPaymentsPaid = transactions.filter { it.type == "PAYMENT" }.sumOf { it.amount }
 
@@ -6515,7 +6789,7 @@ private fun printCustomerStatementViaSystemPrintManager(
                                 canvas.drawRect(tableLeft, rowTop, tableRight, rowBottom, borderPaint)
 
                                 val isPay = tx.type == "PAYMENT"
-                                val dateStr = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(tx.date))
+                                val dateStr = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US).format(Date(tx.date)).toEnglishDigits()
                                 val typeLabel = if (isPay) "تسديد دفعة (-)" else "إضافة دين (+)"
                                 val cleanNotes = tx.notes.ifBlank { "—" }.let {
                                     if (it.length > 34) it.take(34) + "…" else it
@@ -6610,7 +6884,7 @@ private fun printSupplierStatementViaSystemPrintManager(
 
     val safeSupName = supplierName.replace(Regex("[^\\p{L}\\p{N}_-]+"), "_").ifBlank { "Supplier" }
     val jobName = "Supplier_Statement_${safeSupName}_${System.currentTimeMillis() / 1000}"
-    val issueDateStr = SimpleDateFormat("yyyy-MM-dd hh:mm a", Locale.getDefault()).format(Date())
+    val issueDateStr = SimpleDateFormat("yyyy-MM-dd hh:mm a", Locale.US).format(Date()).toEnglishDigits()
     val totalPurchases = invoices.sumOf { it.totalCost }
     val totalPaid = invoices.sumOf { it.paidAmount }
     val totalRemaining = invoices.sumOf { it.remainingDebt }
@@ -6875,7 +7149,7 @@ private fun printSupplierStatementViaSystemPrintManager(
                                 }
                                 canvas.drawRect(tableLeft, rowTop, tableRight, rowBottom, borderPaint)
 
-                                val dateStr = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date(inv.dateMillis))
+                                val dateStr = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date(inv.dateMillis)).toEnglishDigits()
                                 val rowTextY = rowTop + 17f
 
                                 canvas.drawText(runningIndex.toString(), colIdxRight, rowTextY, cellTextPaint)

@@ -509,7 +509,7 @@ data class ActivityLog(
     val metadata: String = ""
 ) {
     val formattedTime: String
-        get() = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(timestamp))
+        get() = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US).format(Date(timestamp))
 }
 
 @Immutable
@@ -604,7 +604,7 @@ data class SyncQueueItem(
     val updatedAt: Long = System.currentTimeMillis()
 ) {
     val formattedTime: String
-        get() = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date(updatedAt))
+        get() = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date(updatedAt))
 }
 
 @Immutable
@@ -659,7 +659,7 @@ data class WorkerRouteCoordinate(
     val timestamp: Long = System.currentTimeMillis()
 ) {
     val formattedTime: String
-        get() = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date(timestamp))
+        get() = SimpleDateFormat("HH:mm:ss", Locale.US).format(Date(timestamp))
 }
 
 

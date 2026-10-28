@@ -348,7 +348,8 @@ interface StoreDao {
         if (salesToInsert.isEmpty()) return emptyList()
         val now = System.currentTimeMillis()
         val invoiceCode = salesToInsert.first().invoiceGroupId.ifBlank {
-            "INV-${(salesToInsert.first().saleDate / 1000).toString().takeLast(6)}"
+            val dateStr = java.text.SimpleDateFormat("ddMMyy", java.util.Locale.US).format(java.util.Date(now))
+            "#1-$dateStr"
         }
         val stampedSales = salesToInsert.map {
             it.copy(
@@ -452,7 +453,8 @@ interface StoreDao {
         if (salesToInsert.isEmpty()) return emptyList()
         val now = System.currentTimeMillis()
         val invoiceCode = salesToInsert.first().invoiceGroupId.ifBlank {
-            "PRE-${(now / 1000).toString().takeLast(6)}"
+            val dateStr = java.text.SimpleDateFormat("ddMMyy", java.util.Locale.US).format(java.util.Date(now))
+            "Pre #1-$dateStr"
         }
         val stampedSales = salesToInsert.map {
             it.copy(

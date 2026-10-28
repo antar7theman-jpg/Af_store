@@ -436,8 +436,9 @@ fun PreSalesOrdersScreen(
                         fontWeight = FontWeight.Bold,
                         fontSize = 13.5.sp
                     )
+                    val formattedOrderId = if (targetOrder.invoiceId.startsWith("#") || targetOrder.invoiceId.startsWith("Pre")) targetOrder.invoiceId else "#${targetOrder.invoiceId}"
                     Text(
-                        text = "رقم الطلبية: #${targetOrder.invoiceId} • الإجمالي: ${String.format(Locale.US, "%.2f", targetOrder.subtotal)} $currencySymbol",
+                        text = "رقم الطلبية: $formattedOrderId • الإجمالي: ${String.format(Locale.US, "%.2f", targetOrder.subtotal)} $currencySymbol",
                         fontSize = 12.5.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -549,8 +550,9 @@ fun PreSalesOrdersScreen(
                 Text("إلغاء طلب البيع المسبق", fontWeight = FontWeight.ExtraBold)
             },
             text = {
+                val formattedOrderId = if (targetOrder.invoiceId.startsWith("#") || targetOrder.invoiceId.startsWith("Pre")) targetOrder.invoiceId else "#${targetOrder.invoiceId}"
                 Text(
-                    text = "هل أنت متأكد من رغبتك في إلغاء طلب البيع المسبق رقم #${targetOrder.invoiceId} للعميل ${targetOrder.customerName}؟\nسيتم تحرير كافة البضائع المحجوزة بالمستودع وإلغاء الطلبية دون أي تأثير مالي.",
+                    text = "هل أنت متأكد من رغبتك في إلغاء طلب البيع المسبق رقم $formattedOrderId للعميل ${targetOrder.customerName}؟\nسيتم تحرير كافة البضائع المحجوزة بالمستودع وإلغاء الطلبية دون أي تأثير مالي.",
                     fontSize = 13.sp
                 )
             },
@@ -652,8 +654,9 @@ fun PreSaleOrderCard(
                         color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
                         border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f))
                     ) {
+                        val formattedOrderId = if (order.invoiceId.startsWith("#") || order.invoiceId.startsWith("Pre")) order.invoiceId else "#${order.invoiceId}"
                         Text(
-                            text = "#${order.invoiceId}",
+                            text = formattedOrderId,
                             fontSize = 11.5.sp,
                             fontWeight = FontWeight.ExtraBold,
                             color = MaterialTheme.colorScheme.primary,

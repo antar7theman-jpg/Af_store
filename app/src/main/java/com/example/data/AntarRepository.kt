@@ -20,6 +20,8 @@ import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import java.util.Locale
 import java.util.Calendar
+import java.util.Date
+import java.text.SimpleDateFormat
 
 class AntarRepository(private val dao: StoreDao) {
 
@@ -45,6 +47,7 @@ class AntarRepository(private val dao: StoreDao) {
             }
         }
             .values
+            .sortedBy { it.first().saleDate }
             .mapIndexed { index, groupedSales ->
                 val first = groupedSales.first()
                 val hasDebt = groupedSales.any { it.isDebt }
@@ -54,13 +57,18 @@ class AntarRepository(private val dao: StoreDao) {
                     hasDebt -> "PARTIAL_DEBT"
                     else -> first.paymentMethod
                 }
-                val baseId = first.invoiceGroupId.ifBlank {
-                    "INV-${(first.saleDate / 1000).toString().takeLast(6)}"
+                val dateStr = SimpleDateFormat("ddMMyy", Locale.US).format(Date(first.saleDate))
+                val isPreSale = first.orderType == "pre_sale"
+                val prefix = if (isPreSale) "Pre #" else "#"
+                val baseId = if (first.invoiceGroupId.isNotBlank() && (first.invoiceGroupId.startsWith("#") || first.invoiceGroupId.startsWith("Pre "))) {
+                    first.invoiceGroupId
+                } else {
+                    "$prefix${index + 1}-$dateStr"
                 }
                 val uniqueInvoiceId = if (usedIds.add(baseId)) {
                     baseId
                 } else {
-                    val candidate = "$baseId-${first.saleId.takeIf { it > 0 } ?: (index + 1)}"
+                    val candidate = "$prefix${index + 1}-$dateStr"
                     usedIds.add(candidate)
                     candidate
                 }

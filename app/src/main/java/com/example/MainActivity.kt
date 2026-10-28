@@ -545,8 +545,8 @@ fun AFStoreMainApp(
                             tonalElevation = NavigationBarDefaults.Elevation,
                             modifier = Modifier
                                 .navigationBarsPadding()
-                                .height(74.dp)
-                                .padding(bottom = 4.dp)
+                                .height(82.dp)
+                                .padding(bottom = 8.dp)
                         ) {
                             bottomBarTabs.forEach { tab ->
                                 val isSelectedTab = selectedTab == tab
@@ -574,7 +574,7 @@ fun AFStoreMainApp(
                                         Box(
                                             contentAlignment = Alignment.Center,
                                             modifier = Modifier
-                                                .offset(y = (-5).dp)
+                                                .offset(y = (-10).dp)
                                                 .width(capsuleWidth)
                                                 .height(capsuleHeight)
                                                 .clip(RoundedCornerShape(16.dp))
@@ -613,7 +613,7 @@ fun AFStoreMainApp(
                                             maxLines = 1,
                                             softWrap = false,
                                             overflow = TextOverflow.Ellipsis,
-                                            modifier = Modifier.offset(y = (-5).dp)
+                                            modifier = Modifier.offset(y = (-10).dp)
                                         )
                                     },
                                     colors = NavigationBarItemDefaults.colors(

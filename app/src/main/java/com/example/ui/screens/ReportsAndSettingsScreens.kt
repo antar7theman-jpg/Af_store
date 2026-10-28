@@ -2014,7 +2014,7 @@ fun SettingsScreen(
                     ) {
                         Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                             Text(text = "الملف: ${meta.fileName}", fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
-                            Text(text = "التاريخ: ${meta.formattedDate}", fontSize = 11.5.sp)
+                            Text(text = "التاريخ: ${meta.formattedDate.toEnglishDigits()}", fontSize = 11.5.sp)
                             Text(text = "الحجم: ${meta.formattedSize}", fontSize = 11.5.sp)
                             Text(text = "التشفير: AES-256-GCM + SHA-256 ✓", fontSize = 11.5.sp, color = Color(0xFF10B981))
                         }
@@ -2100,7 +2100,7 @@ private fun LocalDatabaseBackupCard(
         if (lastBackupTime <= 0L) {
             "لم يتم إنشاء نسخة بعد"
         } else {
-            "آخر نسخة: " + SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(lastBackupTime))
+            "آخر نسخة: " + SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US).format(Date(lastBackupTime))
         }
     }
 
@@ -2360,7 +2360,7 @@ private fun LocalDatabaseBackupCard(
                                                     )
                                                 }
                                                 Text(
-                                                    text = encBackup.formattedDate,
+                                                    text = encBackup.formattedDate.toEnglishDigits(),
                                                     fontSize = 12.sp,
                                                     fontWeight = FontWeight.Bold
                                                 )
@@ -2562,7 +2562,7 @@ private fun LocalDatabaseBackupCard(
                 ) {
                     localBackups.take(8).forEach { backup ->
                         val formattedDate = remember(backup.createdAt) {
-                            SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
+                            SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US)
                                 .format(Date(backup.createdAt))
                         }
                         val sizeKb = (backup.fileSizeBytes / 1024L).coerceAtLeast(1L)
@@ -2712,7 +2712,7 @@ private fun LocalBackupRestoreConfirmDialog(
     var replaceExisting by remember { mutableStateOf(false) }
     val meta = payload.metadata
     val formattedCreatedAt = remember(meta.createdAt) {
-        SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date(meta.createdAt))
+        SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date(meta.createdAt))
     }
 
     AlertDialog(
@@ -3514,6 +3514,15 @@ fun CloudDatabaseBackupCard(
             }
         }
     }
+}
+
+fun String.toEnglishDigits(): String {
+    val easternDigits = charArrayOf('٠', '١', '٢', '٣', '٤', '٥', '٦', '٧', '٨', '٩')
+    var s = this
+    for (i in easternDigits.indices) {
+        s = s.replace(easternDigits[i], ('0' + i))
+    }
+    return s
 }
 
 

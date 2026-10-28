@@ -58,6 +58,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.flowOn
@@ -334,6 +335,89 @@ class AntarSalesViewModel(
     private val _statusBannerMessage = MutableStateFlow<String?>(null)
     val statusBannerMessage: StateFlow<String?> = _statusBannerMessage.asStateFlow()
 
+    /**
+     * حساب وتوليد رقم الفاتورة التسلسلي الجديد
+     * - فواتير البيع العادي: #1-160726، #2-160726
+     * - فواتير الطلب المسبق: Pre #5-160726
+     * حيث الرقم 160726 يمثل اليوم الحالي (ddMMyy)
+     * والرقم التسلسلي متتابع ومستمر بين البيع الآن والطلب المسبق وعبر الأيام.
+     */
+    fun peekNextInvoiceNumber(isPreSale: Boolean = false, timestamp: Long = System.currentTimeMillis()): String {
+        val dateStr = SimpleDateFormat("ddMMyy", Locale.US).format(Date(timestamp))
+        val currentCounter = getOrInitSequenceCounter()
+        val nextSeq = (currentCounter + 1).coerceAtLeast(1)
+        return if (isPreSale) "Pre #$nextSeq-$dateStr" else "#$nextSeq-$dateStr"
+    }
+
+    @Synchronized
+    fun generateNextInvoiceNumber(isPreSale: Boolean = false, timestamp: Long = System.currentTimeMillis()): String {
+        val dateStr = SimpleDateFormat("ddMMyy", Locale.US).format(Date(timestamp))
+        val currentCounter = getOrInitSequenceCounter()
+        val nextSeq = (currentCounter + 1).coerceAtLeast(1)
+        prefs.edit().putInt("global_invoice_sequence_counter", nextSeq).apply()
+        return if (isPreSale) "Pre #$nextSeq-$dateStr" else "#$nextSeq-$dateStr"
+    }
+
+    /**
+     * حساب وتوليد رقم وصل السداد التسلسلي المتتابع مع الفواتير
+     * الصيغة: Pay #2-220726 (حيث 2 هو الرقم التسلسلي، و220726 هو ddMMyy)
+     */
+    fun peekNextPaymentReceiptNumber(timestamp: Long = System.currentTimeMillis()): String {
+        val dateStr = SimpleDateFormat("ddMMyy", Locale.US).format(Date(timestamp))
+        val currentCounter = getOrInitSequenceCounter()
+        val nextSeq = (currentCounter + 1).coerceAtLeast(1)
+        return "Pay #$nextSeq-$dateStr"
+    }
+
+    @Synchronized
+    fun generateNextPaymentReceiptNumber(timestamp: Long = System.currentTimeMillis()): String {
+        val dateStr = SimpleDateFormat("ddMMyy", Locale.US).format(Date(timestamp))
+        val currentCounter = getOrInitSequenceCounter()
+        val nextSeq = (currentCounter + 1).coerceAtLeast(1)
+        prefs.edit().putInt("global_invoice_sequence_counter", nextSeq).apply()
+        return "Pay #$nextSeq-$dateStr"
+    }
+
+    private fun getOrInitSequenceCounter(): Int {
+        val saved = prefs.getInt("global_invoice_sequence_counter", -1)
+        // If saved is within realistic sequential invoice range (0..9999), use it
+        if (saved in 0..9999) return saved
+
+        return recalculateSequenceCounter()
+    }
+
+    fun recalculateSequenceCounter(): Int {
+        val allInvoices = (archivedInvoices.value + preSaleOrders.value).distinctBy { it.invoiceId }
+        var maxSeq = 0
+        val strictRegex = """^(?:Pre\s+|Pay\s+)?#(\d{1,5})-\d{6}$""".toRegex()
+        for (inv in allInvoices) {
+            val trimmed = inv.invoiceId.trim()
+            val match = strictRegex.find(trimmed)
+            if (match != null) {
+                val seqNum = match.groupValues[1].toIntOrNull() ?: 0
+                if (seqNum in 1..9999 && seqNum > maxSeq) {
+                    maxSeq = seqNum
+                }
+            }
+        }
+        val payRegex = """Pay\s+#(\d{1,5})-\d{6}""".toRegex()
+        for (tx in customerTransactions.value) {
+            val match = payRegex.find(tx.notes)
+            if (match != null) {
+                val seqNum = match.groupValues[1].toIntOrNull() ?: 0
+                if (seqNum in 1..9999 && seqNum > maxSeq) {
+                    maxSeq = seqNum
+                }
+            }
+        }
+        // If no invoices match the new format yet, take count of existing invoices (capped to 9999)
+        if (maxSeq == 0 && allInvoices.isNotEmpty()) {
+            maxSeq = allInvoices.size.coerceAtMost(9999)
+        }
+        prefs.edit().putInt("global_invoice_sequence_counter", maxSeq).apply()
+        return maxSeq
+    }
+
     // POS Cart & Checkout Review State
     private val _cartItems = MutableStateFlow<List<CartItem>>(emptyList())
     val cartItems: StateFlow<List<CartItem>> = _cartItems.asStateFlow()
@@ -519,6 +603,41 @@ class AntarSalesViewModel(
                 bluetoothPrinterManager.connectToPrinter(cfg.lastPrinterAddress, cfg.lastPrinterName)
             }
             checkAndRunScheduledSalesReportIfDue()
+        }
+
+        // Keep local sequence counter aligned if remote invoices or payment receipts are pulled
+        viewModelScope.launch(Dispatchers.IO) {
+            combine(archivedInvoices, preSaleOrders, customerTransactions) { reg, pre, txs ->
+                Triple(reg, pre, txs)
+            }.collectLatest { (reg, pre, txs) ->
+                val allInvoices = (reg + pre).distinctBy { it.invoiceId }
+                val saved = prefs.getInt("global_invoice_sequence_counter", -1)
+                var maxSeq = if (saved in 0..9999) saved else 0
+                val strictRegex = """^(?:Pre\s+|Pay\s+)?#(\d{1,5})-\d{6}$""".toRegex()
+                for (inv in allInvoices) {
+                    val trimmed = inv.invoiceId.trim()
+                    val match = strictRegex.find(trimmed)
+                    if (match != null) {
+                        val seqNum = match.groupValues[1].toIntOrNull() ?: 0
+                        if (seqNum in 1..9999 && seqNum > maxSeq) {
+                            maxSeq = seqNum
+                        }
+                    }
+                }
+                val payRegex = """Pay\s+#(\d{1,5})-\d{6}""".toRegex()
+                for (tx in txs) {
+                    val match = payRegex.find(tx.notes)
+                    if (match != null) {
+                        val seqNum = match.groupValues[1].toIntOrNull() ?: 0
+                        if (seqNum in 1..9999 && seqNum > maxSeq) {
+                            maxSeq = seqNum
+                        }
+                    }
+                }
+                if (maxSeq > saved || saved > 9999) {
+                    prefs.edit().putInt("global_invoice_sequence_counter", maxSeq).apply()
+                }
+            }
         }
 
         LowStockNotificationManager.ensureNotificationChannel(application.applicationContext)
@@ -1518,7 +1637,7 @@ class AntarSalesViewModel(
         }
 
         return ArchivedInvoice(
-            invoiceId = "INV-${(now / 1000).toString().takeLast(6)}",
+            invoiceId = peekNextInvoiceNumber(isPreSale = false, timestamp = now),
             dateMillis = now,
             customerName = customer?.name ?: "عميل نقدي",
             customerId = customer?.id,
@@ -1929,7 +2048,7 @@ class AntarSalesViewModel(
                 val lowStockNames = mutableListOf<String>()
                 var totalDebtPortion = 0.0
 
-                val invoiceCode = "INV-${(now / 1000).toString().takeLast(6)}"
+                val invoiceCode = generateNextInvoiceNumber(isPreSale = false, timestamp = now)
                 items.forEach { cartItem ->
                     val netLineTotal = cartItem.lineSubtotal * ratio
                     val unitsDeducted = cartItem.effectiveUnitsDeducted
@@ -2005,7 +2124,7 @@ class AntarSalesViewModel(
                         customerName = customer.name,
                         type = "DEBT",
                         amount = totalDebtPortion,
-                        notes = "فاتورة مبيعات #$invoiceCode",
+                        notes = "فاتورة مبيعات $invoiceCode",
                         date = now,
                         updatedAt = now,
                         syncStatus = RecordSyncState.PENDING
@@ -3271,7 +3390,7 @@ class AntarSalesViewModel(
 
         viewModelScope.launch {
             val now = System.currentTimeMillis()
-            val invoiceCode = "PRE-${(now / 1000).toString().takeLast(6)}"
+            val invoiceCode = generateNextInvoiceNumber(isPreSale = true, timestamp = now)
             val pendingSales = items.map { cartItem ->
                 Sale(
                     productId = cartItem.product.id,
@@ -3320,7 +3439,7 @@ class AntarSalesViewModel(
             launch(Dispatchers.IO) {
                 liveInventorySyncManager.pushInvoiceToCloud(builtOrder, activeStaffAccount)
             }
-            showStatusMessage("تم حفظ طلب البيع المسبق #$invoiceCode بنجاح وحجز البضاعة في النظام 📋")
+            showStatusMessage("تم حفظ طلب البيع المسبق $invoiceCode بنجاح وحجز البضاعة في النظام 📋")
             onSuccess(builtOrder)
         }
     }
@@ -3496,7 +3615,6 @@ class AntarSalesViewModel(
             }
         }
         val especesAmt = (netTotal - creditAmt).coerceAtLeast(0.0)
-        val shortInvNo = invoice.invoiceId.filter { it.isDigit() }.takeLast(6).ifBlank { "602230" }
         val formattedTime = SimpleDateFormat("HH:mm dd/MM/yyyy", Locale.US).format(Date(invoice.dateMillis))
         val discPctInt = if (sousTotal > 0.0 && discountAmt > 0.0) {
             ((discountAmt / sousTotal) * 100.0).toInt().coerceAtLeast(1)
@@ -3507,7 +3625,7 @@ class AntarSalesViewModel(
             storePhone = _storePhone.value,
             customerName = invoice.customerName.ifBlank { "عميل نقدي" },
             cashierName = _currentUser.value?.fullName?.takeIf { it.isNotBlank() } ?: _currentUser.value?.username?.takeIf { !it.contains("@") } ?: "Antar",
-            invoiceNumber = shortInvNo,
+            invoiceNumber = invoice.invoiceId,
             dateTimeFormatted = formattedTime,
             paymentMethodAr = paymentAr,
             lines = lines,

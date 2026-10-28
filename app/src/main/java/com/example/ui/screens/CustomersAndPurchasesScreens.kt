@@ -796,8 +796,9 @@ fun InvoicesArchiveScreen(viewModel: AntarSalesViewModel) {
                                     color = MaterialTheme.colorScheme.surfaceVariant,
                                     border = BorderStroke(0.8.dp, MaterialTheme.colorScheme.outlineVariant)
                                 ) {
+                                    val formattedId = if (inv.invoiceId.startsWith("#") || inv.invoiceId.startsWith("Pre")) inv.invoiceId else "#${inv.invoiceId}"
                                     Text(
-                                        text = "\u200E#${inv.invoiceId}",
+                                        text = "\u200E$formattedId",
                                         fontWeight = FontWeight.ExtraBold,
                                         fontSize = 12.sp,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1113,8 +1114,9 @@ fun InvoicesArchiveScreen(viewModel: AntarSalesViewModel) {
                     modifier = Modifier.fillMaxWidth(),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
+                    val formattedId = if (target.invoiceId.startsWith("#") || target.invoiceId.startsWith("Pre")) target.invoiceId else "#${target.invoiceId}"
                     Text(
-                        text = "هل أنت متأكد من رغبتك في إرجاع الفاتورة رقم \u200E#${target.invoiceId} الخاصة بالعميل ${target.customerName}؟",
+                        text = "هل أنت متأكد من رغبتك في إرجاع الفاتورة رقم \u200E$formattedId الخاصة بالعميل ${target.customerName}؟",
                         fontSize = 13.sp
                     )
 
@@ -1204,8 +1206,9 @@ fun InvoicesArchiveScreen(viewModel: AntarSalesViewModel) {
             },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    val formattedId = if (orderToFulfill.invoiceId.startsWith("#") || orderToFulfill.invoiceId.startsWith("Pre")) orderToFulfill.invoiceId else "#${orderToFulfill.invoiceId}"
                     Text(
-                        text = "هل ترغب في تأكيد تسليم الفاتورة رقم #${orderToFulfill.invoiceId} للعميل ${orderToFulfill.customerName}؟",
+                        text = "هل ترغب في تأكيد تسليم الفاتورة رقم $formattedId للعميل ${orderToFulfill.customerName}؟",
                         fontSize = 13.sp
                     )
                     Surface(
@@ -1323,7 +1326,8 @@ fun InvoicesArchiveScreen(viewModel: AntarSalesViewModel) {
             onInvoiceSelected = { inv ->
                 showQrScannerDialog = false
                 previewInvoice = inv
-                Toast.makeText(context, "تم العثور على الفاتورة #${inv.invoiceId}", Toast.LENGTH_SHORT).show()
+                val formattedId = if (inv.invoiceId.startsWith("#") || inv.invoiceId.startsWith("Pre")) inv.invoiceId else "#${inv.invoiceId}"
+                Toast.makeText(context, "تم العثور على الفاتورة $formattedId", Toast.LENGTH_SHORT).show()
             }
         )
     }
@@ -3995,15 +3999,20 @@ fun CustomersScreen(viewModel: AntarSalesViewModel) {
                                             val laterDebts = laterTxs.filter { it.type != "PAYMENT" }.sumOf { it.amount }
                                             val remAfter = (currentDebt + laterPayments - laterDebts).coerceAtLeast(0.0)
                                             val prevBefore = (remAfter + tx.amount).coerceAtLeast(tx.amount)
+                                            val payMatch = Regex("""(Pay\s*#\d{1,5}-\d{6})""").find(tx.notes)
+                                            val dateStr = SimpleDateFormat("ddMMyy", Locale.US).format(Date(tx.date))
+                                            val receiptCode = payMatch?.groupValues?.get(1)
+                                                ?: "Pay #${(if (tx.id > 0) tx.id else (tx.date / 1000 % 1000)).toString().takeLast(3)}-$dateStr"
+                                            val cleanNotes = tx.notes.replace(Regex("""\[Pay\s*#\d{1,5}-\d{6}\]"""), "").trim()
                                             activeCustomerReceipt = DebtPaymentReceiptData(
-                                                receiptNumber = "PAY-${(tx.date / 1000).toString().takeLast(6)}",
+                                                receiptNumber = receiptCode,
                                                 partyType = "CUSTOMER",
                                                 partyName = cust?.name ?: tx.customerName,
                                                 partyPhone = cust?.phone.orEmpty(),
                                                 previousBalance = prevBefore,
                                                 paidAmount = tx.amount,
                                                 remainingBalance = remAfter,
-                                                notes = tx.notes.ifBlank { "تحصيل دفعة نقدية من حساب المديونية" },
+                                                notes = cleanNotes.ifBlank { "تحصيل دفعة نقدية من حساب المديونية" },
                                                 timestampMillis = tx.date
                                             )
                                         },
@@ -4715,7 +4724,8 @@ fun CustomersScreen(viewModel: AntarSalesViewModel) {
                                 ) {
                                     val formattedDate = SimpleDateFormat("yyyy/MM/dd HH:mm", Locale.getDefault()).format(Date(inv.dateMillis))
                                     Column {
-                                        Text("فاتورة #${inv.invoiceId}", fontWeight = FontWeight.Bold, fontSize = 11.5.sp)
+                                        val formattedId = if (inv.invoiceId.startsWith("#") || inv.invoiceId.startsWith("Pre")) inv.invoiceId else "#${inv.invoiceId}"
+                                        Text("فاتورة $formattedId", fontWeight = FontWeight.Bold, fontSize = 11.5.sp)
                                         Text(formattedDate, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
                                     Text(
@@ -4890,7 +4900,10 @@ fun CustomersScreen(viewModel: AntarSalesViewModel) {
                         onClick = {
                             val amt = amount.toDoubleOrNull() ?: 0.0
                             if (amt > 0) {
-                                viewModel.recordCustomerPayment(target, amt, notes)
+                                val now = System.currentTimeMillis()
+                                val receiptNum = viewModel.generateNextPaymentReceiptNumber(now)
+                                val fullNotes = if (notes.isNotBlank()) "[$receiptNum] $notes" else "[$receiptNum] تحصيل دفعة نقدية من حساب المديونية"
+                                viewModel.recordCustomerPayment(target, amt, fullNotes)
                                 paymentCustomer = null
                             }
                         }
@@ -4904,10 +4917,12 @@ fun CustomersScreen(viewModel: AntarSalesViewModel) {
                                 val prevDebt = target.balanceDebt
                                 val remDebt = (prevDebt - amt).coerceAtLeast(0.0)
                                 val now = System.currentTimeMillis()
-                                viewModel.recordCustomerPayment(target, amt, notes)
+                                val receiptNum = viewModel.generateNextPaymentReceiptNumber(now)
+                                val fullNotes = if (notes.isNotBlank()) "[$receiptNum] $notes" else "[$receiptNum] تحصيل دفعة نقدية من حساب المديونية"
+                                viewModel.recordCustomerPayment(target, amt, fullNotes)
                                 paymentCustomer = null
                                 activeCustomerReceipt = DebtPaymentReceiptData(
-                                    receiptNumber = "PAY-${(now / 1000).toString().takeLast(6)}",
+                                    receiptNumber = receiptNum,
                                     partyType = "CUSTOMER",
                                     partyName = target.name,
                                     partyPhone = target.phone,
@@ -4919,7 +4934,7 @@ fun CustomersScreen(viewModel: AntarSalesViewModel) {
                                 )
                             }
                         },
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF10B981))
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0F172A))
                     ) {
                         Icon(Icons.Default.Print, contentDescription = null, tint = Color.White, modifier = Modifier.size(15.dp))
                         Spacer(Modifier.width(4.dp))

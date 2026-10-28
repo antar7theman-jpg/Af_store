@@ -140,6 +140,7 @@ fun InvoiceTemplatePreviewDialog(
     cartItems: List<CartItem> = emptyList(),
     archivedInvoice: ArchivedInvoice? = null,
     isPreSavePreview: Boolean = true,
+    isPreSale: Boolean = false,
     onDismiss: () -> Unit,
     onConfirmAndSave: () -> Unit = {},
     onConfirmAndPrint: () -> Unit = {}
@@ -177,9 +178,22 @@ fun InvoiceTemplatePreviewDialog(
     val nowMillis = remember(archivedInvoice) {
         archivedInvoice?.dateMillis ?: System.currentTimeMillis()
     }
-    val shortInvoiceNumber = remember(archivedInvoice, nowMillis) {
-        archivedInvoice?.invoiceId?.filter { it.isDigit() }?.takeLast(6)?.ifBlank { "602230" }
-            ?: (nowMillis / 1000).toString().takeLast(6)
+    val isPreSaleOrder = archivedInvoice?.isPreSale == true || isPreSale
+    val shortInvoiceNumber = remember(archivedInvoice, nowMillis, isPreSaleOrder) {
+        if (archivedInvoice != null && archivedInvoice.invoiceId.isNotBlank()) {
+            val id = archivedInvoice.invoiceId.trim()
+            if (id.startsWith("#") || id.startsWith("Pre #") || id.startsWith("Pre#") || id.startsWith("Pre ")) {
+                id
+            } else {
+                val dateStr = SimpleDateFormat("ddMMyy", Locale.US).format(Date(archivedInvoice.dateMillis))
+                val prefix = if (archivedInvoice.isPreSale) "Pre #" else "#"
+                val match = """(?:Pre\s*)?#?(\d+)""".toRegex().find(id)
+                val seq = match?.groupValues?.get(1)?.toIntOrNull()?.takeIf { it in 1..9999 } ?: 1
+                "$prefix$seq-$dateStr"
+            }
+        } else {
+            viewModel.peekNextInvoiceNumber(isPreSale = isPreSaleOrder, timestamp = nowMillis)
+        }
     }
     val formattedDateTime = remember(nowMillis) {
         SimpleDateFormat("HH:mm dd/MM/yyyy", Locale.US).format(Date(nowMillis))
@@ -555,7 +569,7 @@ fun InvoiceTemplatePreviewDialog(
                                         storePhone = storePhone,
                                         customerName = customerDisplayName,
                                         cashierName = cashierDisplayName,
-                                        invoiceNum = "#1-$shortInvoiceNumber",
+                                        invoiceNum = shortInvoiceNumber,
                                         dateTime = formattedDateTime,
                                         paymentMethodAr = paymentMethodAr,
                                         lines = previewLines,
@@ -1720,7 +1734,7 @@ internal fun BonDeLivraisonPaperCard(
 
                 // 2nd in RTL -> Physical Left
                 Text(
-                    text = "#1-$shortInvoiceNumber",
+                    text = shortInvoiceNumber,
                     fontFamily = FontFamily.Monospace,
                     fontWeight = FontWeight.ExtraBold,
                     fontSize = 14.5.sp,
@@ -2388,7 +2402,7 @@ private fun TemplateKReceiptContent(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "Bon: #1-$shortInvoiceNumber",
+                            text = "Bon: $shortInvoiceNumber",
                             fontFamily = FontFamily.Monospace,
                             fontWeight = FontWeight.Black,
                             fontSize = 13.sp,
@@ -2952,7 +2966,7 @@ private fun ThermalPosTabularReceiptContent(
                             )
                         }
                         Text(
-                            text = "#1-$shortInvoiceNumber",
+                            text = shortInvoiceNumber,
                             fontFamily = FontFamily.Monospace,
                             fontWeight = FontWeight.Bold,
                             fontSize = 11.5.sp,
@@ -3803,7 +3817,7 @@ internal fun exportAndShareInvoicePdf(
         }
         if (style == InvoiceStyle.TEMPLATE_K) {
             boldPaint.textAlign = Paint.Align.LEFT
-            canvas.drawText("Bon: #1-$shortInvoiceNumber", 16f, y, boldPaint)
+            canvas.drawText("Bon: $shortInvoiceNumber", 16f, y, boldPaint)
             regularPaint.textAlign = Paint.Align.RIGHT
             canvas.drawText("Date: $formattedDateTime", 304f, y, regularPaint)
             y += 15f
@@ -3975,7 +3989,7 @@ internal fun exportAndShareInvoicePdf(
             y += 14f
             canvas.drawLine(16f, y, 304f, y, regularPaint)
             y += 16f
-            canvas.drawText("التاريخ: $formattedDateTime  |  #1-$shortInvoiceNumber", 300f, y, regularPaint)
+            canvas.drawText("التاريخ: $formattedDateTime  |  $shortInvoiceNumber", 300f, y, regularPaint)
             y += 15f
             canvas.drawText("طريقة الدفع: $paymentMethodAr", 300f, y, boldPaint)
             y += 14f
@@ -4129,7 +4143,8 @@ internal fun exportAndShareInvoicePdf(
 
         val pdfDir = File(context.cacheDir, "invoices")
         pdfDir.mkdirs()
-        val pdfFile = File(pdfDir, "Bon_de_livraison_$shortInvoiceNumber.pdf")
+        val safeInvoiceNum = shortInvoiceNumber.replace("#", "").replace(" ", "_").replace("/", "-")
+        val pdfFile = File(pdfDir, "Bon_de_livraison_$safeInvoiceNum.pdf")
         FileOutputStream(pdfFile).use { out ->
             pdfDocument.writeTo(out)
         }
@@ -4147,7 +4162,7 @@ internal fun exportAndShareInvoicePdf(
             storePhone = storePhone,
             customerName = customerName,
             cashierName = cashierName,
-            invoiceNum = "#1-$shortInvoiceNumber",
+            invoiceNum = shortInvoiceNumber,
             dateTime = formattedDateTime,
             paymentMethodAr = paymentMethodAr,
             lines = lines,

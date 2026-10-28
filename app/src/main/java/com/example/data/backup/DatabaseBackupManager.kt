@@ -174,7 +174,7 @@ object DatabaseBackupManager {
 
             pruneOldBackups(context)
 
-            val readableFormat = SimpleDateFormat("yyyy/MM/dd HH:mm", Locale.getDefault())
+            val readableFormat = SimpleDateFormat("yyyy/MM/dd HH:mm", Locale.US)
             val metadata = BackupMetadata(
                 file = backupFile,
                 fileName = fileName,
@@ -254,7 +254,7 @@ object DatabaseBackupManager {
         val backupDir = getBackupDirectory(context)
         val files = backupDir.listFiles { file -> file.isFile && file.name.endsWith(".antar_enc") } ?: emptyArray()
 
-        val readableFormat = SimpleDateFormat("yyyy/MM/dd HH:mm", Locale.getDefault())
+        val readableFormat = SimpleDateFormat("yyyy/MM/dd HH:mm", Locale.US)
         files.map { file ->
             val isAuto = file.name.startsWith("auto_backup")
             BackupMetadata(
