@@ -5,6 +5,8 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -37,11 +39,15 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ChevronLeft
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.Payments
+import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.PointOfSale
+import androidx.compose.material.icons.filled.Print
 import androidx.compose.material.icons.filled.Savings
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.WarningAmber
 import androidx.compose.material3.AlertDialog
@@ -554,42 +560,83 @@ fun DailyZReportQuickSummaryCard(
                 )
             }
 
-            Button(
-                onClick = {
-                    val message = buildFormattedZReportWhatsAppMessage(
-                        report = reportData,
-                        storeName = storeName,
-                        currencySymbol = currencySymbol,
-                        preparedBy = preparedByName,
-                        shiftNotes = shiftNotes,
-                        isClosed = isShiftClosed
-                    )
-                    shareTextViaWhatsApp(
-                        context = context,
-                        phone = "",
-                        text = message
-                    )
-                },
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF16A34A)),
-                shape = RoundedCornerShape(12.dp),
-                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag("quick_z_report_whatsapp_owner_btn")
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Icon(
-                    imageVector = Icons.AutoMirrored.Filled.Send,
-                    contentDescription = "إرسال عبر واتساب",
-                    tint = Color.White,
-                    modifier = Modifier.size(18.dp)
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = "إرسال ملخص اليوم المالي كاملاً عبر واتساب بلمسة واحدة",
-                    fontWeight = FontWeight.ExtraBold,
-                    fontSize = 12.sp,
-                    color = Color.White
-                )
+                Button(
+                    onClick = {
+                        val message = buildFormattedZReportWhatsAppMessage(
+                            report = reportData,
+                            storeName = storeName,
+                            currencySymbol = currencySymbol,
+                            preparedBy = preparedByName,
+                            shiftNotes = shiftNotes,
+                            isClosed = isShiftClosed
+                        )
+                        shareTextViaWhatsApp(
+                            context = context,
+                            phone = "",
+                            text = message
+                        )
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF16A34A)),
+                    shape = RoundedCornerShape(12.dp),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
+                    modifier = Modifier
+                        .weight(1.25f)
+                        .testTag("quick_z_report_whatsapp_owner_btn")
+                ) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.Send,
+                        contentDescription = "إرسال عبر واتساب",
+                        tint = Color.White,
+                        modifier = Modifier.size(17.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "إرسال عبر واتساب",
+                        fontWeight = FontWeight.ExtraBold,
+                        fontSize = 11.5.sp,
+                        color = Color.White
+                    )
+                }
+
+                Button(
+                    onClick = {
+                        DailyZReportPdfExporter.shareZReportPdf(
+                            context = context,
+                            report = reportData,
+                            storeName = storeName,
+                            currencySymbol = currencySymbol,
+                            preparedBy = preparedByName,
+                            shiftNotes = shiftNotes,
+                            isClosed = isShiftClosed,
+                            shiftClosedTime = viewModel.getDayZReportClosedTime(todayKey),
+                            preferWhatsApp = false
+                        )
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626)),
+                    shape = RoundedCornerShape(12.dp),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("quick_z_report_send_pdf_btn")
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.PictureAsPdf,
+                        contentDescription = "إرسال التقرير بصيغة PDF",
+                        tint = Color.White,
+                        modifier = Modifier.size(17.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "إرسال بصيغة PDF",
+                        fontWeight = FontWeight.ExtraBold,
+                        fontSize = 11.5.sp,
+                        color = Color.White
+                    )
+                }
             }
         }
     }
@@ -720,6 +767,29 @@ fun DailyZReportScreen(
     var showDrawerConfigDialog by remember { mutableStateOf(false) }
     var showWhatsAppPreviewDialog by remember { mutableStateOf(false) }
     var showQuickExpenseDialog by remember { mutableStateOf(false) }
+
+    val saveZReportPdfLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/pdf")
+    ) { targetUri ->
+        if (targetUri != null) {
+            val savedOk = DailyZReportPdfExporter.saveZReportPdfToUri(
+                context = context,
+                targetUri = targetUri,
+                report = reportData,
+                storeName = storeName,
+                currencySymbol = currencySymbol,
+                preparedBy = preparedByName,
+                shiftNotes = shiftNotes,
+                isClosed = isShiftClosed,
+                shiftClosedTime = shiftClosedTime
+            )
+            Toast.makeText(
+                context,
+                if (savedOk) "تم حفظ تقرير Z-Report بصيغة PDF بنجاح في الهاتف 📄" else "تعذر حفظ ملف PDF",
+                Toast.LENGTH_SHORT
+            ).show()
+        }
+    }
 
     val formattedWhatsAppMessage = remember(
         reportData,
@@ -1161,13 +1231,13 @@ fun DailyZReportScreen(
                 ) {
                     Column(modifier = Modifier.fillMaxWidth()) {
                         Text(
-                            text = "📲 إرسال تقرير Z-Report عبر واتساب",
+                            text = "📲 إرسال تقرير Z-Report عبر واتساب أو بصيغة PDF",
                             fontWeight = FontWeight.ExtraBold,
                             fontSize = 14.sp,
                             color = Color(0xFF16A34A)
                         )
                         Text(
-                            text = "مشاركة ملخص الإغلاق اليومي كاملاً برسالة منسقة عبر واتساب",
+                            text = "مشاركة ملخص الإغلاق اليومي كاملاً برسالة منسقة أو كملف PDF رسمي عبر واتساب وبقية التطبيقات",
                             fontSize = 11.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -1201,6 +1271,107 @@ fun DailyZReportScreen(
                             fontSize = 13.sp,
                             color = Color.White
                         )
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Button(
+                            onClick = {
+                                DailyZReportPdfExporter.shareZReportPdf(
+                                    context = context,
+                                    report = reportData,
+                                    storeName = storeName,
+                                    currencySymbol = currencySymbol,
+                                    preparedBy = preparedByName,
+                                    shiftNotes = shiftNotes,
+                                    isClosed = isShiftClosed,
+                                    shiftClosedTime = shiftClosedTime,
+                                    preferWhatsApp = false
+                                )
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626)),
+                            shape = RoundedCornerShape(12.dp),
+                            contentPadding = PaddingValues(vertical = 11.dp, horizontal = 12.dp),
+                            modifier = Modifier
+                                .weight(1.35f)
+                                .testTag("z_report_send_pdf_btn")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.PictureAsPdf,
+                                contentDescription = "إرسال التقرير بصيغة PDF",
+                                tint = Color.White,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = "إرسال التقرير بصيغة PDF",
+                                fontWeight = FontWeight.ExtraBold,
+                                fontSize = 12.sp,
+                                color = Color.White
+                            )
+                        }
+
+                        OutlinedButton(
+                            onClick = {
+                                saveZReportPdfLauncher.launch(
+                                    DailyZReportPdfExporter.suggestedFileName(reportData.dayKey)
+                                )
+                            },
+                            shape = RoundedCornerShape(12.dp),
+                            border = BorderStroke(1.dp, Color(0xFFDC2626).copy(alpha = 0.55f)),
+                            contentPadding = PaddingValues(vertical = 11.dp, horizontal = 8.dp),
+                            modifier = Modifier
+                                .weight(0.75f)
+                                .testTag("z_report_save_pdf_btn")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Download,
+                                contentDescription = "حفظ PDF",
+                                tint = Color(0xFFDC2626),
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = "حفظ PDF",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = Color(0xFFDC2626)
+                            )
+                        }
+
+                        OutlinedButton(
+                            onClick = {
+                                DailyZReportPdfExporter.printZReportPdf(
+                                    context = context,
+                                    report = reportData,
+                                    storeName = storeName,
+                                    currencySymbol = currencySymbol,
+                                    preparedBy = preparedByName,
+                                    shiftNotes = shiftNotes,
+                                    isClosed = isShiftClosed,
+                                    shiftClosedTime = shiftClosedTime
+                                )
+                            },
+                            shape = RoundedCornerShape(12.dp),
+                            contentPadding = PaddingValues(vertical = 11.dp, horizontal = 8.dp),
+                            modifier = Modifier
+                                .weight(0.65f)
+                                .testTag("z_report_print_pdf_btn")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Print,
+                                contentDescription = "طباعة PDF",
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = "طباعة",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
                     }
 
                     Row(
@@ -1631,20 +1802,44 @@ fun DailyZReportScreen(
                 }
             },
             confirmButton = {
-                Button(
-                    onClick = {
-                        showWhatsAppPreviewDialog = false
-                        shareTextViaWhatsApp(
-                            context = context,
-                            phone = "",
-                            text = formattedWhatsAppMessage
-                        )
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF16A34A))
-                ) {
-                    Icon(Icons.AutoMirrored.Filled.Send, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text("إرسال عبر واتساب الآن", fontWeight = FontWeight.ExtraBold)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(
+                        onClick = {
+                            showWhatsAppPreviewDialog = false
+                            DailyZReportPdfExporter.shareZReportPdf(
+                                context = context,
+                                report = reportData,
+                                storeName = storeName,
+                                currencySymbol = currencySymbol,
+                                preparedBy = preparedByName,
+                                shiftNotes = shiftNotes,
+                                isClosed = isShiftClosed,
+                                shiftClosedTime = shiftClosedTime,
+                                preferWhatsApp = false
+                            )
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626))
+                    ) {
+                        Icon(Icons.Default.PictureAsPdf, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(5.dp))
+                        Text("إرسال PDF", fontWeight = FontWeight.ExtraBold)
+                    }
+
+                    Button(
+                        onClick = {
+                            showWhatsAppPreviewDialog = false
+                            shareTextViaWhatsApp(
+                                context = context,
+                                phone = "",
+                                text = formattedWhatsAppMessage
+                            )
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF16A34A))
+                    ) {
+                        Icon(Icons.AutoMirrored.Filled.Send, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(5.dp))
+                        Text("إرسال نص واتساب", fontWeight = FontWeight.ExtraBold)
+                    }
                 }
             },
             dismissButton = {
