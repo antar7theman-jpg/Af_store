@@ -1,6 +1,8 @@
 package com.example.ui.screens
 
 import com.example.data.models.ActivityLog
+import com.example.data.models.Promotion
+import com.example.data.models.PromotionType
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.foundation.horizontalScroll
@@ -79,6 +81,7 @@ import androidx.compose.material.icons.filled.PersonAdd
 import androidx.compose.material.icons.filled.Print
 import androidx.compose.material.icons.filled.Phone
 import androidx.compose.material.icons.filled.PointOfSale
+import androidx.compose.material.icons.filled.LocalOffer
 import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.Search
@@ -169,6 +172,9 @@ fun PosScreen(
     var preSaleDeliveryNotesInput by remember { mutableStateOf("") }
     var preSaleDeliveryDaysChoice by remember { mutableIntStateOf(1) }
     val discountAmount by viewModel.discountAmount.collectAsState()
+    val appliedCoupon by viewModel.appliedCoupon.collectAsState()
+    val promotionalDiscountAmount by viewModel.promotionalDiscountAmount.collectAsState()
+    var showCouponEntryDialog by remember { mutableStateOf(false) }
     val lastInvoice by viewModel.lastCompletedInvoice.collectAsState()
     val storeName by viewModel.storeName.collectAsState()
     val currencySymbol by viewModel.currencySymbol.collectAsState()
@@ -980,6 +986,122 @@ fun PosScreen(
                                     )
                                 }
 
+                                // Coupon / Promotion Quick Pill or Button
+                                if (!isPreSaleMode) {
+                                    if (appliedCoupon != null) {
+                                        Surface(
+                                            onClick = { showCouponEntryDialog = true },
+                                            shape = RoundedCornerShape(10.dp),
+                                            color = Color(0xFF059669).copy(alpha = if (semantic.isDark) 0.20f else 0.12f),
+                                            border = BorderStroke(1.dp, Color(0xFF059669).copy(alpha = 0.5f)),
+                                            modifier = Modifier.fillMaxWidth().height(32.dp)
+                                        ) {
+                                            Row(
+                                                modifier = Modifier.fillMaxSize().padding(horizontal = 8.dp),
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.SpaceBetween
+                                            ) {
+                                                Row(
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                                    modifier = Modifier.weight(1f, fill = false)
+                                                ) {
+                                                    Icon(
+                                                        Icons.Default.LocalOffer,
+                                                        contentDescription = null,
+                                                        tint = Color(0xFF059669),
+                                                        modifier = Modifier.size(14.dp)
+                                                    )
+                                                    Text(
+                                                        text = "${appliedCoupon?.code}: -${String.format(Locale.US, "%.2f", promotionalDiscountAmount)} $currencySymbol",
+                                                        fontSize = 11.sp,
+                                                        fontWeight = FontWeight.Bold,
+                                                        color = Color(0xFF059669),
+                                                        maxLines = 1,
+                                                        overflow = TextOverflow.Ellipsis
+                                                    )
+                                                }
+                                                IconButton(
+                                                    onClick = { viewModel.removeAppliedCoupon() },
+                                                    modifier = Modifier.size(24.dp)
+                                                ) {
+                                                    Icon(
+                                                        Icons.Default.Close,
+                                                        contentDescription = "إزالة الكوبون",
+                                                        tint = MaterialTheme.colorScheme.error,
+                                                        modifier = Modifier.size(14.dp)
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    } else {
+                                        Surface(
+                                            onClick = { showCouponEntryDialog = true },
+                                            shape = RoundedCornerShape(10.dp),
+                                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                                            modifier = Modifier.fillMaxWidth().height(30.dp)
+                                        ) {
+                                            Row(
+                                                modifier = Modifier.fillMaxSize().padding(horizontal = 8.dp),
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.Center
+                                            ) {
+                                                Icon(
+                                                    Icons.Default.LocalOffer,
+                                                    contentDescription = null,
+                                                    tint = MaterialTheme.colorScheme.primary,
+                                                    modifier = Modifier.size(13.dp)
+                                                )
+                                                Spacer(modifier = Modifier.width(4.dp))
+                                                Text(
+                                                    text = "كوبون خصم / عروض ترويجية",
+                                                    fontSize = 11.sp,
+                                                    fontWeight = FontWeight.SemiBold,
+                                                    color = MaterialTheme.colorScheme.primary
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+
+                                if (discountAmount > 0.0) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            text = "المجموع الأصلي:",
+                                            fontSize = if (isCompactCartPanel) 10.5.sp else 11.5.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                        Text(
+                                            text = "${String.format(Locale.US, "%.2f", rawSubtotal)} $currencySymbol",
+                                            fontSize = if (isCompactCartPanel) 10.5.sp else 11.5.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            text = "إجمالي الخصومات:",
+                                            fontSize = if (isCompactCartPanel) 10.5.sp else 11.5.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = Color(0xFF059669)
+                                        )
+                                        Text(
+                                            text = "-${String.format(Locale.US, "%.2f", discountAmount)} $currencySymbol",
+                                            fontSize = if (isCompactCartPanel) 11.sp else 12.sp,
+                                            fontWeight = FontWeight.ExtraBold,
+                                            color = Color(0xFF059669)
+                                        )
+                                    }
+                                }
+
                                 // Net Total Row
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
@@ -1386,6 +1508,211 @@ fun PosScreen(
             onDismiss = { selectedProductForMovementHistory = null }
         )
     }
+
+    if (showCouponEntryDialog) {
+        CouponEntryDialog(
+            viewModel = viewModel,
+            onDismiss = { showCouponEntryDialog = false }
+        )
+    }
+}
+
+@Composable
+private fun CouponEntryDialog(
+    viewModel: AntarSalesViewModel,
+    onDismiss: () -> Unit
+) {
+    var codeInput by remember { mutableStateOf("") }
+    var errorMessage by remember { mutableStateOf<String?>(null) }
+    val promotions by viewModel.promotions.collectAsState()
+    val appliedCoupon by viewModel.appliedCoupon.collectAsState()
+    val availableCoupons = remember(promotions) {
+        promotions.filter { it.isActive && !it.isExpired }
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Icon(
+                    Icons.Default.LocalOffer,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary
+                )
+                Text(
+                    text = "كوبونات الخصم والعروض الترويجية",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                if (appliedCoupon != null) {
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = Color(0xFF059669).copy(alpha = 0.12f),
+                        border = BorderStroke(1.dp, Color(0xFF059669).copy(alpha = 0.45f)),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "الكوبون المطبق: ${appliedCoupon?.code ?: appliedCoupon?.title}",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 12.5.sp,
+                                    color = Color(0xFF059669)
+                                )
+                                Text(
+                                    text = appliedCoupon?.formattedSummary() ?: "",
+                                    fontSize = 11.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            TextButton(
+                                onClick = {
+                                    viewModel.removeAppliedCoupon()
+                                }
+                            ) {
+                                Text("إلغاء", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
+                }
+
+                OutlinedTextField(
+                    value = codeInput,
+                    onValueChange = {
+                        codeInput = it.uppercase()
+                        errorMessage = null
+                    },
+                    label = { Text("رمز الكوبون (Promo Code)") },
+                    placeholder = { Text("مثال: WELCOME10 أو SAVE500") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp)
+                )
+
+                if (errorMessage != null) {
+                    Text(
+                        text = errorMessage ?: "",
+                        color = MaterialTheme.colorScheme.error,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+
+                if (availableCoupons.isNotEmpty()) {
+                    Text(
+                        text = "العروض والكوبونات المتاحة حالياً بالمتجر:",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    availableCoupons.forEach { promo ->
+                        Surface(
+                            onClick = {
+                                if (promo.isCoupon) {
+                                    val res = viewModel.applyCouponCode(promo.code ?: "")
+                                    if (res.isSuccess) {
+                                        onDismiss()
+                                    } else {
+                                        errorMessage = res.exceptionOrNull()?.message
+                                    }
+                                } else {
+                                    viewModel.applyPromotionDirectly(promo)
+                                    onDismiss()
+                                }
+                            },
+                            shape = RoundedCornerShape(10.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .padding(8.dp)
+                                    .fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = promo.title,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 12.sp
+                                    )
+                                    Text(
+                                        text = promo.formattedSummary(),
+                                        fontSize = 11.sp,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                    if (promo.code != null) {
+                                        Text(
+                                            text = "الكود: ${promo.code}",
+                                            fontSize = 10.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+                                TextButton(
+                                    onClick = {
+                                        if (promo.isCoupon) {
+                                            val res = viewModel.applyCouponCode(promo.code ?: "")
+                                            if (res.isSuccess) {
+                                                onDismiss()
+                                            } else {
+                                                errorMessage = res.exceptionOrNull()?.message
+                                            }
+                                        } else {
+                                            viewModel.applyPromotionDirectly(promo)
+                                            onDismiss()
+                                        }
+                                    }
+                                ) {
+                                    Text("تطبيق", fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    val res = viewModel.applyCouponCode(codeInput)
+                    if (res.isSuccess) {
+                        onDismiss()
+                    } else {
+                        errorMessage = res.exceptionOrNull()?.message
+                    }
+                },
+                enabled = codeInput.isNotBlank()
+            ) {
+                Text("تطبيق الكود")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("إغلاق")
+            }
+        }
+    )
 }
 
 @Composable

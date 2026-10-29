@@ -160,6 +160,12 @@ import com.example.ui.screens.SettingsScreen
 import com.example.ui.screens.SyncStatusDropdownPanel
 import com.example.ui.screens.SyncStatusScreen
 import com.example.ui.screens.TopBarLowStockBellButton
+import com.example.ui.screens.PromotionsScreen
+import com.example.ui.screens.ExpensesScreen
+import com.example.ui.screens.ExpiryAndWasteScreen
+import androidx.compose.material.icons.filled.LocalOffer
+import androidx.compose.material.icons.filled.Payments
+import androidx.compose.material.icons.filled.DeleteSweep
 import com.example.ui.theme.AFStoreTheme
 import com.example.ui.theme.AppThemeMode
 import com.example.ui.theme.AppThemePalette
@@ -189,6 +195,9 @@ enum class MainAppTab(
     INVENTORY("المخزون", "إدارة الأصناف والكميات المحجوزة", Icons.Default.Inventory2, "tab_inventory", false),
     REORDER_ALERTS("تنبيهات الطلب", "إدارة النواقص وإشعارات المخزون", Icons.Default.NotificationsActive, "tab_reorder_alerts", false),
     WORKER_TRACKING("تتبع العمال", "تتبع إحداثيات GPS للعمال والمناديب مباشر", Icons.Default.MyLocation, "tab_worker_tracking", false),
+    PROMOTIONS("العروض والخصومات", "إدارة عروض الكميات وكوبونات التخفيض", Icons.Default.LocalOffer, "tab_promotions", false),
+    EXPENSES("المصاريف والنفقات", "تسجيل وتتبع نفقات وتشغيل المتجر", Icons.Default.Payments, "tab_expenses", false),
+    EXPIRY_AND_WASTE("سجل الهالك والتوالف", "تسجيل وتوثيق البضائع التالفة وخسائر المخزون", Icons.Default.DeleteSweep, "tab_expiry_waste", false),
     REPORTS("التقارير", "الأرباح الصافية والإحصائيات المالية", Icons.Default.Analytics, "tab_reports", false)
 }
 
@@ -267,6 +276,8 @@ fun AFStoreMainApp(
     val lowStockProducts by viewModel.lowStockProducts.collectAsState()
     val activeLowStockAlert by viewModel.activeLowStockInAppAlert.collectAsState()
     val outOfStockCount = remember(lowStockProducts) { lowStockProducts.count { it.stock <= 0 } }
+    val products by viewModel.products.collectAsState(initial = emptyList())
+    val damagedItems by viewModel.damagedItems.collectAsState()
 
     val themeMode by viewModel.themeMode.collectAsState()
     val themePalette by viewModel.themePalette.collectAsState()
@@ -395,12 +406,15 @@ fun AFStoreMainApp(
                         MainAppTab.CUSTOMERS -> workerPerms.canManageDebtsAndCustomers
                         MainAppTab.LOYALTY -> workerPerms.canManageDebtsAndCustomers
                         MainAppTab.WORKER_TRACKING -> true
+                        MainAppTab.PROMOTIONS -> workerPerms.canApplyDiscounts || myStaffAccount.isManagerOrAdmin
                         MainAppTab.SETTINGS -> true
                         MainAppTab.DASHBOARD -> workerPerms.canViewReports
                         MainAppTab.DEBTS -> workerPerms.canManageDebtsAndCustomers
                         MainAppTab.INVOICES -> workerPerms.canMakeSales
                         MainAppTab.PURCHASES -> workerPerms.canManagePurchaseInvoices
                         MainAppTab.REORDER_ALERTS -> workerPerms.canManageInventory || workerPerms.canManagePurchaseInvoices
+                        MainAppTab.EXPENSES -> workerPerms.canViewReports || myStaffAccount.isManagerOrAdmin
+                        MainAppTab.EXPIRY_AND_WASTE -> workerPerms.canManageInventory || myStaffAccount.isManagerOrAdmin
                         MainAppTab.REPORTS -> workerPerms.canViewReports
                     }
                 }
@@ -981,6 +995,18 @@ fun AFStoreMainApp(
                                         onNavigateBack = { selectedTab = MainAppTab.POS }
                                     )
                                     MainAppTab.REPORTS -> ReportsScreen(viewModel = viewModel)
+                                    MainAppTab.PROMOTIONS -> PromotionsScreen(
+                                        viewModel = viewModel,
+                                        onNavigateBack = { selectedTab = MainAppTab.POS }
+                                    )
+                                    MainAppTab.EXPENSES -> ExpensesScreen(
+                                        viewModel = viewModel,
+                                        onNavigateBack = { selectedTab = MainAppTab.POS }
+                                    )
+                                    MainAppTab.EXPIRY_AND_WASTE -> ExpiryAndWasteScreen(
+                                        viewModel = viewModel,
+                                        onNavigateBack = { selectedTab = MainAppTab.POS }
+                                    )
                                     MainAppTab.SETTINGS -> SettingsScreen(
                                         viewModel = viewModel,
                                         onOpenApkTempModal = { showApkTempModal = true },
@@ -1281,6 +1307,21 @@ fun AFStoreMainApp(
                                                 ) {
                                                     Text(
                                                         text = "${lowStockProducts.size} نواقص",
+                                                        fontSize = 9.5.sp,
+                                                        fontWeight = FontWeight.ExtraBold,
+                                                        color = Color(0xFFEF4444),
+                                                        modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
+                                                    )
+                                                }
+                                            }
+                                            if (tab == MainAppTab.EXPIRY_AND_WASTE && damagedItems.isNotEmpty()) {
+                                                Surface(
+                                                    shape = RoundedCornerShape(6.dp),
+                                                    color = Color(0xFFEF4444).copy(alpha = 0.16f),
+                                                    border = BorderStroke(1.dp, Color(0xFFEF4444).copy(alpha = 0.7f))
+                                                ) {
+                                                    Text(
+                                                        text = "${damagedItems.size} تالف",
                                                         fontSize = 9.5.sp,
                                                         fontWeight = FontWeight.ExtraBold,
                                                         color = Color(0xFFEF4444),

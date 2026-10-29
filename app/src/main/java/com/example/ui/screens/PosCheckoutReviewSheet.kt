@@ -80,6 +80,8 @@ fun PosCheckoutReviewSheet(
     val paymentMethod by viewModel.paymentMethod.collectAsStateWithLifecycle()
     val isInvoiceDiscountPercent by viewModel.isInvoiceDiscountPercent.collectAsStateWithLifecycle()
     val invoiceDiscountValue by viewModel.invoiceDiscountValue.collectAsStateWithLifecycle()
+    val appliedCoupon by viewModel.appliedCoupon.collectAsStateWithLifecycle()
+    val promotionalDiscountAmount by viewModel.promotionalDiscountAmount.collectAsStateWithLifecycle()
     val isInvoiceTvaEnabled by viewModel.isInvoiceTvaEnabled.collectAsStateWithLifecycle()
     val invoiceTvaPercent by viewModel.invoiceTvaPercent.collectAsStateWithLifecycle()
     val currency by viewModel.currencySymbol.collectAsStateWithLifecycle()
@@ -131,10 +133,13 @@ fun PosCheckoutReviewSheet(
     val hasAnyItemDebt = cartItems.any { it.hasAnyDebt }
     val totalUnitsCount = remember(cartItems) { cartItems.sumOf { it.effectiveUnitsDeducted } }
     val subtotal = remember(cartItems) { cartItems.sumOf { it.lineSubtotal } }
-    val invoiceDiscountAmount = remember(subtotal, isInvoiceDiscountPercent, invoiceDiscountValue) {
+    val manualDiscountAmount = remember(subtotal, isInvoiceDiscountPercent, invoiceDiscountValue) {
         if (invoiceDiscountValue <= 0.0) 0.0
         else if (isInvoiceDiscountPercent) subtotal * (invoiceDiscountValue.coerceIn(0.0, 100.0) / 100.0)
         else invoiceDiscountValue.coerceIn(0.0, subtotal)
+    }
+    val invoiceDiscountAmount = remember(manualDiscountAmount, promotionalDiscountAmount, subtotal) {
+        (manualDiscountAmount + promotionalDiscountAmount).coerceIn(0.0, subtotal)
     }
     val afterDiscount = (subtotal - invoiceDiscountAmount).coerceAtLeast(0.0)
     val invoiceTvaAmount = remember(afterDiscount, isInvoiceTvaEnabled, invoiceTvaPercent) {
@@ -835,6 +840,58 @@ fun PosCheckoutReviewSheet(
                                             unfocusedBorderColor = colorScheme.outlineVariant
                                         )
                                     )
+
+                                    if (appliedCoupon != null || promotionalDiscountAmount > 0.0) {
+                                        Spacer(modifier = Modifier.height(6.dp))
+                                        Surface(
+                                            shape = RoundedCornerShape(10.dp),
+                                            color = Color(0xFF059669).copy(alpha = if (isDark) 0.18f else 0.10f),
+                                            border = BorderStroke(1.dp, Color(0xFF059669).copy(alpha = 0.4f)),
+                                            modifier = Modifier.fillMaxWidth()
+                                        ) {
+                                            Row(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .padding(horizontal = 10.dp, vertical = 6.dp),
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.SpaceBetween
+                                            ) {
+                                                Row(
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                                    modifier = Modifier.weight(1f, fill = false)
+                                                ) {
+                                                    Icon(
+                                                        Icons.Default.LocalOffer,
+                                                        contentDescription = null,
+                                                        tint = Color(0xFF059669),
+                                                        modifier = Modifier.size(15.dp)
+                                                    )
+                                                    Column {
+                                                        Text(
+                                                            text = appliedCoupon?.let { "كوبون مفعّل: ${it.code}" } ?: "عروض كميات مفعّلة تلقائياً",
+                                                            fontSize = 11.5.sp,
+                                                            fontWeight = FontWeight.Bold,
+                                                            color = Color(0xFF059669)
+                                                        )
+                                                        Text(
+                                                            text = "وفرت: ${String.format(Locale.US, "%.2f", promotionalDiscountAmount)} $currency",
+                                                            fontSize = 10.5.sp,
+                                                            color = colorScheme.onSurfaceVariant
+                                                        )
+                                                    }
+                                                }
+                                                if (appliedCoupon != null) {
+                                                    TextButton(
+                                                        onClick = { viewModel.removeAppliedCoupon() },
+                                                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp)
+                                                    ) {
+                                                        Text("إلغاء", color = colorScheme.error, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
 
                                     Spacer(modifier = Modifier.height(8.dp))
                                     HorizontalDivider(color = colorScheme.outlineVariant.copy(alpha = 0.5f))

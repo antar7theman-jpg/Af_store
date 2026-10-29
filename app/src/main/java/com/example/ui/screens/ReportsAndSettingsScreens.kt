@@ -74,6 +74,7 @@ import androidx.compose.material.icons.filled.ManageAccounts
 import androidx.compose.material.icons.filled.MergeType
 import androidx.compose.material.icons.filled.NightsStay
 import androidx.compose.material.icons.filled.Palette
+import androidx.compose.material.icons.filled.Payments
 import androidx.compose.material.icons.filled.Phone
 import androidx.compose.material.icons.filled.QrCode2
 import androidx.compose.material.icons.filled.Restore
@@ -202,6 +203,9 @@ fun ReportsScreen(viewModel: AntarSalesViewModel) {
     val storePhone by viewModel.storePhone.collectAsState()
     val scheduledReportConfig by viewModel.scheduledReportConfig.collectAsState()
     val scheduledReportsArchive by viewModel.scheduledReportsArchive.collectAsState()
+    val expenses by viewModel.expenses.collectAsState()
+    val totalExpensesThisMonth = remember(expenses) { viewModel.getExpensesThisMonth() }
+    val totalExpensesToday = remember(expenses) { viewModel.getExpensesToday() }
 
     var selectedPeriod by rememberSaveable { mutableStateOf(SalesReportPeriod.DAILY_7) }
     var chartDisplayMode by rememberSaveable { mutableStateOf(SalesChartDisplayMode.BAR_AND_TREND) }
@@ -367,24 +371,47 @@ fun ReportsScreen(viewModel: AntarSalesViewModel) {
                     )
                 }
 
-                Surface(
-                    shape = RoundedCornerShape(12.dp),
-                    color = semantic.cardElevated,
-                    shadowElevation = if (semantic.isDark) 0.dp else 2.dp,
-                    border = BorderStroke(1.dp, semantic.cardBorder)
-                ) {
-                    Column(
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = semantic.cardElevated,
+                        shadowElevation = if (semantic.isDark) 0.dp else 2.dp,
+                        border = BorderStroke(1.dp, semantic.cardBorder)
                     ) {
-                        Text("إجمالي التوريدات", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        AnimatedMoneyText(
-                            targetAmount = totalPurchasesCost,
-                            currencySymbol = currencySymbol,
-                            decimals = 0,
-                            fontWeight = FontWeight.ExtraBold,
-                            fontSize = 12.sp
-                        )
+                        Column(
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Text("إجمالي التوريدات", fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            AnimatedMoneyText(
+                                targetAmount = totalPurchasesCost,
+                                currencySymbol = currencySymbol,
+                                decimals = 0,
+                                fontWeight = FontWeight.ExtraBold,
+                                fontSize = 11.sp
+                            )
+                        }
+                    }
+
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = semantic.cardElevated,
+                        shadowElevation = if (semantic.isDark) 0.dp else 2.dp,
+                        border = BorderStroke(1.dp, semantic.cardBorder)
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Text("مصاريف الشهر", fontSize = 9.sp, color = Color(0xFFEF4444))
+                            AnimatedMoneyText(
+                                targetAmount = totalExpensesThisMonth,
+                                currencySymbol = currencySymbol,
+                                decimals = 0,
+                                fontWeight = FontWeight.ExtraBold,
+                                fontSize = 11.sp
+                            )
+                        }
                     }
                 }
             }
@@ -451,6 +478,121 @@ fun ReportsScreen(viewModel: AntarSalesViewModel) {
                 overview = periodOverview,
                 currencySymbol = currencySymbol
             )
+        }
+
+        // Operating Expenses vs Net Profit Card
+        item {
+            Card(
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = semantic.surface),
+                border = BorderStroke(1.dp, semantic.cardBorder),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Icon(
+                                Icons.Default.Payments,
+                                contentDescription = null,
+                                tint = Color(0xFFEF4444),
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Text(
+                                text = "المصاريف التشغيلية وصافي ربح المتجر",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                        Text(
+                            text = "${expenses.size} سند مسجل",
+                            fontSize = 11.sp,
+                            color = semantic.textSecondary
+                        )
+                    }
+
+                    HorizontalDivider(color = semantic.divider)
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = semantic.cardSubtle.copy(alpha = 0.5f),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(8.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(2.dp)
+                            ) {
+                                Text("مصاريف اليوم", fontSize = 10.sp, color = semantic.textSecondary)
+                                Text(
+                                    text = "${String.format(Locale.US, "%.0f", totalExpensesToday)} $currencySymbol",
+                                    fontSize = 12.5.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFFF59E0B)
+                                )
+                            }
+                        }
+
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = semantic.cardSubtle.copy(alpha = 0.5f),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(8.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(2.dp)
+                            ) {
+                                Text("مصاريف الشهر", fontSize = 10.sp, color = semantic.textSecondary)
+                                Text(
+                                    text = "${String.format(Locale.US, "%.0f", totalExpensesThisMonth)} $currencySymbol",
+                                    fontSize = 12.5.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFFEF4444)
+                                )
+                            }
+                        }
+
+                        val grossProfitMonth = periodOverview.currentMonthNetProfit
+                        val trueNetProfit = grossProfitMonth - totalExpensesThisMonth
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = if (trueNetProfit >= 0.0) Color(0xFF10B981).copy(alpha = 0.12f) else Color(0xFFEF4444).copy(alpha = 0.12f),
+                            border = BorderStroke(0.8.dp, if (trueNetProfit >= 0.0) Color(0xFF10B981).copy(alpha = 0.4f) else Color(0xFFEF4444).copy(alpha = 0.4f)),
+                            modifier = Modifier.weight(1.2f)
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(8.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(2.dp)
+                            ) {
+                                Text("صافي الربح الفعلي", fontSize = 10.sp, color = semantic.textSecondary)
+                                Text(
+                                    text = "${String.format(Locale.US, "%.0f", trueNetProfit)} $currencySymbol",
+                                    fontSize = 12.5.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = if (trueNetProfit >= 0.0) Color(0xFF10B981) else Color(0xFFEF4444)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         // Time Period Range Selector (7 Days | 30 Days | 6 Months | 12 Months) + Period KPIs

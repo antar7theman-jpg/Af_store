@@ -20,6 +20,17 @@ import com.example.data.models.RecordSyncState
 import com.example.data.models.Sale
 import com.example.data.models.User
 import com.example.data.models.UserRole
+import com.example.data.models.Promotion
+import com.example.data.models.PromotionType
+import com.example.data.repository.PromotionRepository
+import com.example.data.models.Expense
+import com.example.data.models.ExpenseCategory
+import com.example.data.repository.ExpenseRepository
+import com.example.data.models.DamagedItemRecord
+import com.example.data.models.ExpiryStatus
+import com.example.data.models.ProductExpiryRecord
+import com.example.data.models.SpoilageReason
+import com.example.data.repository.ExpiryAndWasteRepository
 import com.example.R
 import com.example.data.firebase.LiveInventorySyncManager
 import com.example.data.firebase.StaffAccount
@@ -146,6 +157,17 @@ class AntarSalesViewModel(
     private val prefs = application.getSharedPreferences("af_store_prefs", Context.MODE_PRIVATE)
     private val staffAccountRepository = StaffAccountRepository(application)
     val liveInventorySyncManager = LiveInventorySyncManager(application, viewModelScope)
+    val promotionRepository = PromotionRepository(application)
+    val promotions: StateFlow<List<Promotion>> = promotionRepository.promotions
+    val expenseRepository = ExpenseRepository(application)
+    val expenses: StateFlow<List<Expense>> = expenseRepository.expenses
+    val expiryAndWasteRepository = ExpiryAndWasteRepository(application)
+    val productExpiryMap: StateFlow<Map<Int, ProductExpiryRecord>> = expiryAndWasteRepository.expiryRecords
+    val damagedItems: StateFlow<List<DamagedItemRecord>> = expiryAndWasteRepository.damagedItems
+    private val _appliedCoupon = MutableStateFlow<Promotion?>(null)
+    val appliedCoupon: StateFlow<Promotion?> = _appliedCoupon.asStateFlow()
+    private val _promotionalDiscountAmount = MutableStateFlow(0.0)
+    val promotionalDiscountAmount: StateFlow<Double> = _promotionalDiscountAmount.asStateFlow()
     private var activeStaffAccount: StaffAccount? = null
 
     val isLiveInventorySyncActive: StateFlow<Boolean> = liveInventorySyncManager.isLiveSyncActive
@@ -603,6 +625,12 @@ class AntarSalesViewModel(
                 bluetoothPrinterManager.connectToPrinter(cfg.lastPrinterAddress, cfg.lastPrinterName)
             }
             checkAndRunScheduledSalesReportIfDue()
+        }
+
+        viewModelScope.launch {
+            promotions.collectLatest {
+                recalculateDiscountAmount()
+            }
         }
 
         // Keep local sequence counter aligned if remote invoices or payment receipts are pulled
@@ -1551,13 +1579,16 @@ class AntarSalesViewModel(
     private fun recalculateDiscountAmount() {
         val itemsSubtotal = _cartItems.value.sumOf { it.lineSubtotal }
         val rawVal = _invoiceDiscountValue.value
-        _discountAmount.value = if (rawVal <= 0.0) {
+        val manualDiscount = if (rawVal <= 0.0) {
             0.0
         } else if (_isInvoiceDiscountPercent.value) {
             itemsSubtotal * (rawVal.coerceIn(0.0, 100.0) / 100.0)
         } else {
             rawVal.coerceIn(0.0, itemsSubtotal)
         }
+        val promoDiscount = calculatePromotionDiscountAmount(itemsSubtotal)
+        _promotionalDiscountAmount.value = promoDiscount
+        _discountAmount.value = (manualDiscount + promoDiscount).coerceIn(0.0, itemsSubtotal)
     }
 
     fun calculateInvoiceSubtotal(): Double {
@@ -1565,14 +1596,134 @@ class AntarSalesViewModel(
     }
 
     fun calculateInvoiceDiscountAmount(): Double {
-        val subtotal = calculateInvoiceSubtotal()
-        val rawVal = _invoiceDiscountValue.value
-        return if (rawVal <= 0.0) {
-            0.0
-        } else if (_isInvoiceDiscountPercent.value) {
-            subtotal * (rawVal.coerceIn(0.0, 100.0) / 100.0)
-        } else {
-            rawVal.coerceIn(0.0, subtotal)
+        return _discountAmount.value
+    }
+
+    fun calculatePromotionDiscountAmount(itemsSubtotal: Double = calculateInvoiceSubtotal()): Double {
+        var totalPromoSavings = 0.0
+        val items = _cartItems.value
+
+        // 1. Automatic Quantity Tier & BOGO Promotions from active non-coupon promotions
+        val activeAutoPromotions = promotions.value.filter { it.isActive && !it.isCoupon && !it.isExpired }
+        for (promo in activeAutoPromotions) {
+            when (promo.type) {
+                PromotionType.QUANTITY_TIER_DISCOUNT -> {
+                    for (item in items) {
+                        if (promo.targetProductId == null || promo.targetProductId == item.product.id) {
+                            if (item.effectiveUnitsDeducted >= promo.minQuantity && promo.minQuantity > 0) {
+                                val tierSaving = item.rawLineSubtotal * (promo.discountValue.coerceIn(0.0, 100.0) / 100.0)
+                                totalPromoSavings += tierSaving
+                            }
+                        }
+                    }
+                }
+                PromotionType.BUY_X_GET_Y_FREE -> {
+                    for (item in items) {
+                        if (promo.targetProductId == null || promo.targetProductId == item.product.id) {
+                            val cycle = promo.minQuantity + promo.rewardFreeQuantity
+                            if (cycle > 0 && item.effectiveUnitsDeducted >= cycle) {
+                                val freeUnitsCount = (item.effectiveUnitsDeducted / cycle) * promo.rewardFreeQuantity
+                                val freeSavings = freeUnitsCount * item.customUnitPrice
+                                totalPromoSavings += freeSavings
+                            }
+                        }
+                    }
+                }
+                else -> { /* other types applied via coupons or direct selection */ }
+            }
+        }
+
+        // 2. Applied Coupon (if any)
+        val coupon = _appliedCoupon.value
+        if (coupon != null && coupon.isActive && !coupon.isExpired) {
+            if (coupon.minCartTotal == null || itemsSubtotal >= coupon.minCartTotal) {
+                when (coupon.type) {
+                    PromotionType.PERCENTAGE_DISCOUNT -> {
+                        val saving = itemsSubtotal * (coupon.discountValue.coerceIn(0.0, 100.0) / 100.0)
+                        totalPromoSavings += saving
+                    }
+                    PromotionType.FIXED_AMOUNT_DISCOUNT -> {
+                        totalPromoSavings += coupon.discountValue.coerceIn(0.0, itemsSubtotal)
+                    }
+                    PromotionType.QUANTITY_TIER_DISCOUNT -> {
+                        for (item in items) {
+                            if (coupon.targetProductId == null || coupon.targetProductId == item.product.id) {
+                                if (item.effectiveUnitsDeducted >= coupon.minQuantity && coupon.minQuantity > 0) {
+                                    val tierSaving = item.rawLineSubtotal * (coupon.discountValue.coerceIn(0.0, 100.0) / 100.0)
+                                    totalPromoSavings += tierSaving
+                                }
+                            }
+                        }
+                    }
+                    PromotionType.BUY_X_GET_Y_FREE -> {
+                        for (item in items) {
+                            if (coupon.targetProductId == null || coupon.targetProductId == item.product.id) {
+                                val cycle = coupon.minQuantity + coupon.rewardFreeQuantity
+                                if (cycle > 0 && item.effectiveUnitsDeducted >= cycle) {
+                                    val freeUnitsCount = (item.effectiveUnitsDeducted / cycle) * coupon.rewardFreeQuantity
+                                    val freeSavings = freeUnitsCount * item.customUnitPrice
+                                    totalPromoSavings += freeSavings
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        return totalPromoSavings.coerceIn(0.0, itemsSubtotal)
+    }
+
+    fun applyCouponCode(code: String): Result<Promotion> {
+        val trimmed = code.trim().uppercase()
+        if (trimmed.isEmpty()) {
+            return Result.failure(IllegalArgumentException("يرجى إدخال رمز الكوبون"))
+        }
+        val promo = promotionRepository.findCouponByCode(trimmed)
+            ?: return Result.failure(IllegalArgumentException("رمز الكوبون ($trimmed) غير موجود أو غير صالح"))
+
+        if (!promo.isActive) {
+            return Result.failure(IllegalStateException("هذا الكوبون غير مفعّل حالياً"))
+        }
+        if (promo.isExpired) {
+            return Result.failure(IllegalStateException("انتهت صلاحية هذا الكوبون"))
+        }
+        if (promo.maxUses != null && promo.usedCount >= promo.maxUses) {
+            return Result.failure(IllegalStateException("تم استنفاد الحد الأقصى لاستخدام هذا الكوبون (${promo.maxUses} مرة)"))
+        }
+
+        val cartSubtotal = calculateInvoiceSubtotal()
+        if (promo.minCartTotal != null && cartSubtotal < promo.minCartTotal) {
+            return Result.failure(IllegalStateException("الحد الأدنى للفاتورة للاستفادة من الكوبون هو ${promo.minCartTotal} د.ج (المجموع الحالي: $cartSubtotal د.ج)"))
+        }
+
+        _appliedCoupon.value = promo
+        recalculateDiscountAmount()
+        showStatusMessage("✓ تم تطبيق كود الخصم: ${promo.code} بنجاح (${promo.formattedSummary()})")
+        return Result.success(promo)
+    }
+
+    fun applyPromotionDirectly(promo: Promotion) {
+        if (!promo.isActive || promo.isExpired) {
+            showStatusMessage("العرض الترويجي غير متاح أو منتهي الصلاحية")
+            return
+        }
+        val cartSubtotal = calculateInvoiceSubtotal()
+        if (promo.minCartTotal != null && cartSubtotal < promo.minCartTotal) {
+            showStatusMessage("الحد الأدنى للفاتورة للاستفادة هو ${promo.minCartTotal} د.ج")
+            return
+        }
+        _appliedCoupon.value = promo
+        recalculateDiscountAmount()
+        showStatusMessage("✓ تم تفعيل العرض: ${promo.title}")
+    }
+
+    fun removeAppliedCoupon() {
+        val prev = _appliedCoupon.value
+        _appliedCoupon.value = null
+        recalculateDiscountAmount()
+        if (prev != null) {
+            showStatusMessage("تمت إزالة كود الخصم: ${prev.code ?: prev.title}")
         }
     }
 
@@ -1681,6 +1832,8 @@ class AntarSalesViewModel(
         _selectedCustomer.value = null
         _paymentMethod.value = "CASH"
         _isLoyaltyDiscountApplied.value = false
+        _appliedCoupon.value = null
+        _promotionalDiscountAmount.value = 0.0
     }
 
     fun selectCustomerForPos(customer: Customer?) {
@@ -2167,6 +2320,10 @@ class AntarSalesViewModel(
                 builtInvoice to lowStockNames
             }
 
+            val usedCoupon = _appliedCoupon.value
+            if (usedCoupon != null) {
+                promotionRepository.recordPromotionUsage(usedCoupon.id)
+            }
             _lastCompletedInvoice.value = invoice
             clearCart()
 
@@ -4141,6 +4298,128 @@ class AntarSalesViewModel(
             runningSum += points
             (day * 24 * 60 * 60 * 1000L) to runningSum
         }
+    }
+
+    fun saveExpense(expense: Expense) {
+        expenseRepository.saveExpense(expense)
+        viewModelScope.launch {
+            repository.logActivity(
+                user = _currentUser.value,
+                actionType = "EXPENSE_RECORDED",
+                description = "تسجيل مصروف: ${expense.title} بقيمة ${String.format(Locale.US, "%.2f", expense.amount)} ${_currencySymbol.value} (${expense.category.labelAr})"
+            )
+        }
+    }
+
+    fun deleteExpense(id: String) {
+        val exp = expenses.value.find { it.id == id }
+        expenseRepository.deleteExpense(id)
+        if (exp != null) {
+            viewModelScope.launch {
+                repository.logActivity(
+                    user = _currentUser.value,
+                    actionType = "EXPENSE_DELETED",
+                    description = "حذف مصروف: ${exp.title} بقيمة ${String.format(Locale.US, "%.2f", exp.amount)} ${_currencySymbol.value}"
+                )
+            }
+        }
+    }
+
+    fun getTotalExpensesBetween(startMillis: Long, endMillis: Long): Double {
+        return expenseRepository.getTotalExpensesBetween(startMillis, endMillis)
+    }
+
+    fun getExpensesThisMonth(): Double {
+        val start = expenseRepository.getCurrentMonthStartMillis()
+        return expenseRepository.getTotalExpensesBetween(start, Long.MAX_VALUE)
+    }
+
+    fun getExpensesToday(): Double {
+        val start = expenseRepository.getTodayStartMillis()
+        return expenseRepository.getTotalExpensesBetween(start, Long.MAX_VALUE)
+    }
+
+    fun setProductExpiry(
+        productId: Int,
+        expiryDateMillis: Long,
+        productionDateMillis: Long? = null,
+        batchNumber: String = "",
+        notes: String = ""
+    ) {
+        val record = ProductExpiryRecord(
+            productId = productId,
+            expiryDateMillis = expiryDateMillis,
+            productionDateMillis = productionDateMillis,
+            batchNumber = batchNumber.trim(),
+            notes = notes.trim(),
+            updatedAt = System.currentTimeMillis()
+        )
+        expiryAndWasteRepository.saveExpiryRecord(record)
+        showStatusMessage("تم حفظ وتحديث تاريخ صلاحية الصنف بنجاح 📅")
+    }
+
+    fun removeProductExpiry(productId: Int) {
+        expiryAndWasteRepository.removeExpiryRecord(productId)
+        showStatusMessage("تم إلغاء تاريخ الصلاحية المسجل للصنف")
+    }
+
+    fun recordDamagedGoods(
+        product: Product,
+        quantity: Int,
+        reason: SpoilageReason,
+        notes: String = "",
+        imagePath: String = "",
+        deductFromStock: Boolean = true,
+        recordedBy: String = ""
+    ) {
+        val safeQty = quantity.coerceAtLeast(1)
+        val unitCost = product.purchasePrice.coerceAtLeast(0.0)
+        val loss = safeQty * unitCost
+        val staffName = recordedBy.ifBlank { activeStaffAccount?.fullName ?: "إدارة المتجر" }
+
+        val damagedRecord = DamagedItemRecord(
+            productId = product.id,
+            productName = product.name,
+            productBarcode = product.barcode,
+            quantity = safeQty,
+            unitCost = unitCost,
+            totalLoss = loss,
+            reason = reason,
+            dateMillis = System.currentTimeMillis(),
+            recordedBy = staffName,
+            notes = notes.trim(),
+            imagePath = imagePath,
+            deductedFromStock = deductFromStock
+        )
+        expiryAndWasteRepository.saveDamagedItem(damagedRecord)
+
+        if (deductFromStock) {
+            val updatedStock = (product.stock - safeQty).coerceAtLeast(0)
+            viewModelScope.launch {
+                repository.saveProduct(product.copy(stock = updatedStock))
+                repository.logActivity(
+                    user = _currentUser.value,
+                    actionType = "PRODUCT_DAMAGE_RECORDED",
+                    description = "تسجيل تلف/هالك: ${product.name} (عدد $safeQty وحدة) بسبب ${reason.labelAr} - خسارة ${loss} د.ج",
+                    metadata = "productId=${product.id};qty=$safeQty;reason=${reason.id};loss=$loss;newStock=$updatedStock"
+                )
+            }
+        }
+
+        showStatusMessage("تم تسجيل البضاعة التالفة بنجاح (${reason.labelAr}) 🗑️")
+    }
+
+    fun deleteDamagedItem(id: String) {
+        expiryAndWasteRepository.deleteDamagedItem(id)
+        showStatusMessage("تم حذف سجل التلف بنجاح")
+    }
+
+    fun getDamagedLossThisMonth(): Double {
+        return expiryAndWasteRepository.getTotalLossThisMonth()
+    }
+
+    fun getDamagedLossToday(): Double {
+        return expiryAndWasteRepository.getTotalLossToday()
     }
 }
 
