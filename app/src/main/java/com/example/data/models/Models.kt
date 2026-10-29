@@ -549,6 +549,73 @@ data class ArchivedInvoice(
         get() = orderType == "pre_sale" && status == "completed"
     val isCancelledPreSale: Boolean
         get() = status == "cancelled"
+    val isReturnRequested: Boolean
+        get() = status == "return_requested"
+
+    private fun parseReturnTagMap(): Map<String, String> {
+        val tagStart = notes.indexOf("[RETURN_REQ|")
+        if (tagStart == -1) return emptyMap()
+        val tagEnd = notes.indexOf("]", tagStart)
+        if (tagEnd == -1) return emptyMap()
+        val inner = notes.substring(tagStart + "[RETURN_REQ|".length, tagEnd)
+        val result = mutableMapOf<String, String>()
+        inner.split("|").forEach { part ->
+            val idx = part.indexOf("=")
+            if (idx > 0) {
+                val key = part.substring(0, idx).trim()
+                val value = part.substring(idx + 1).trim()
+                result[key] = value
+            }
+        }
+        return result
+    }
+
+    val returnRequestWorkerName: String
+        get() = parseReturnTagMap()["workerName"]?.takeIf { it.isNotBlank() } ?: "عامل المبيعات"
+
+    val returnRequestWorkerUid: String
+        get() = parseReturnTagMap()["workerUid"].orEmpty()
+
+    val returnRequestManagerUid: String
+        get() = parseReturnTagMap()["managerUid"].orEmpty()
+
+    val returnRequestManagerEmail: String
+        get() = parseReturnTagMap()["managerEmail"].orEmpty()
+
+    val returnRequestManagerName: String
+        get() = parseReturnTagMap()["managerName"]?.takeIf { it.isNotBlank() } ?: "المدير المسؤول"
+
+    val returnRequestReason: String
+        get() = parseReturnTagMap()["reason"].orEmpty()
+
+    val returnRequestTimestamp: Long
+        get() = parseReturnTagMap()["time"]?.toLongOrNull() ?: dateMillis
+
+    val returnRequestFormattedTime: String
+        get() = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US).format(Date(returnRequestTimestamp))
+
+    val cleanNotesWithoutReturnTag: String
+        get() = notes.replace(Regex("""\s*\[RETURN_REQ\|[^\]]*\]"""), "").trim()
+
+    companion object {
+        fun buildNotesWithReturnRequest(
+            existingNotes: String,
+            workerName: String,
+            workerUid: String,
+            managerUid: String,
+            managerEmail: String,
+            managerName: String,
+            reason: String,
+            timestamp: Long = System.currentTimeMillis()
+        ): String {
+            val cleanBase = existingNotes.replace(Regex("""\s*\[RETURN_REQ\|[^\]]*\]"""), "").trim()
+            val safeWorker = workerName.replace("|", " ").replace("]", " ").trim().ifBlank { "عامل المبيعات" }
+            val safeManager = managerName.replace("|", " ").replace("]", " ").trim().ifBlank { "المدير المسؤول" }
+            val safeReason = reason.replace("|", " ").replace("]", " ").trim()
+            val tag = "[RETURN_REQ|workerName=$safeWorker|workerUid=$workerUid|managerUid=$managerUid|managerEmail=$managerEmail|managerName=$safeManager|time=$timestamp|reason=$safeReason]"
+            return if (cleanBase.isBlank()) tag else "$cleanBase $tag"
+        }
+    }
 }
 
 enum class InvoiceStyle(val id: String, val displayNameAr: String, val descriptionAr: String) {

@@ -80,6 +80,7 @@ data class DamagedItemRecord(
     val notes: String = "",
     val batchNumber: String = "",
     val imagePath: String = "",
+    val imageUrl: String = "",
     val deductedFromStock: Boolean = true,
     val updatedAt: Long = System.currentTimeMillis()
 ) {

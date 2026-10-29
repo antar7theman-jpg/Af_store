@@ -182,7 +182,7 @@ private fun buildPdfPayloadForArchivedInvoice(
         )
     }
 
-    val formattedDateTime = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(inv.dateMillis))
+    val formattedDateTime = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US).format(Date(inv.dateMillis))
 
     return InvoicePdfPayload(
         storeName = storeName,
@@ -227,6 +227,7 @@ fun InvoicesArchiveScreen(viewModel: AntarSalesViewModel) {
     val preSalePendingCount = remember(invoices) { invoices.count { it.isPendingPreSale } }
     val preSaleCompletedCount = remember(invoices) { invoices.count { it.isCompletedPreSale } }
     val directInvoicesCount = remember(invoices) { invoices.count { !it.isPreSale } }
+    val returnRequestedCount = remember(invoices) { invoices.count { it.isReturnRequested } }
 
     val storeName by viewModel.storeName.collectAsState()
     val storePhone by viewModel.storePhone.collectAsState()
@@ -235,6 +236,9 @@ fun InvoicesArchiveScreen(viewModel: AntarSalesViewModel) {
 
     val products by viewModel.products.collectAsState()
     val currentUser by viewModel.currentUser.collectAsState()
+    val isWorker by viewModel.isCurrentUserWorker.collectAsState()
+    val affiliatedManagerName by viewModel.currentWorkerAffiliatedManagerName.collectAsState()
+    val pendingReturnRequests by viewModel.pendingReturnRequests.collectAsState()
     val receiptFooterText by viewModel.receiptFooterText.collectAsState()
     val developerContact by viewModel.developerContact.collectAsState()
 
@@ -247,6 +251,7 @@ fun InvoicesArchiveScreen(viewModel: AntarSalesViewModel) {
                 "PRE_SALE_PENDING" -> inv.isPendingPreSale
                 "PRE_SALE_COMPLETED" -> inv.isCompletedPreSale
                 "DIRECT" -> !inv.isPreSale
+                "RETURN_REQUESTED" -> inv.isReturnRequested
                 else -> true
             }
             if (!matchesOrderType) return@filter false
@@ -565,6 +570,29 @@ fun InvoicesArchiveScreen(viewModel: AntarSalesViewModel) {
                     label = { Text("بيع فوري ($directInvoicesCount)", fontSize = 11.sp, fontWeight = if (orderTypeFilter == "DIRECT") FontWeight.Bold else FontWeight.Normal) },
                     modifier = Modifier.testTag("invoices_type_direct")
                 )
+                FilterChip(
+                    selected = orderTypeFilter == "RETURN_REQUESTED",
+                    onClick = { orderTypeFilter = "RETURN_REQUESTED" },
+                    label = {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Text(
+                                "طلبات المرتجع ($returnRequestedCount)",
+                                fontSize = 11.sp,
+                                fontWeight = if (orderTypeFilter == "RETURN_REQUESTED") FontWeight.Bold else FontWeight.Normal,
+                                color = if (returnRequestedCount > 0) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
+                            )
+                            if (returnRequestedCount > 0) {
+                                Surface(shape = CircleShape, color = MaterialTheme.colorScheme.error) {
+                                    Box(modifier = Modifier.size(7.dp))
+                                }
+                            }
+                        }
+                    },
+                    modifier = Modifier.testTag("invoices_type_return_requested")
+                )
             }
 
             // Row B: Payment & Date Filter Pills
@@ -627,6 +655,121 @@ fun InvoicesArchiveScreen(viewModel: AntarSalesViewModel) {
             }
         }
 
+        // --- 3.5 Manager Return Requests Notification Box (or Worker Pending Requests Status) ---
+        if (pendingReturnRequests.isNotEmpty()) {
+            Surface(
+                shape = RoundedCornerShape(14.dp),
+                color = if (!isWorker) MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.35f) else semantic.debtAmber.copy(alpha = 0.14f),
+                border = BorderStroke(
+                    1.2.dp,
+                    if (!isWorker) MaterialTheme.colorScheme.error.copy(alpha = 0.65f) else semantic.debtAmber.copy(alpha = 0.65f)
+                ),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("pending_return_requests_banner")
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(10.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Replay,
+                                contentDescription = null,
+                                tint = if (!isWorker) MaterialTheme.colorScheme.error else semantic.debtAmber,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Text(
+                                text = if (!isWorker) {
+                                    "🔔 طلبات إرجاع فواتير من العمال بانتظار موافقتك (${pendingReturnRequests.size})"
+                                } else {
+                                    "⏳ طلبات مرتجع مرسلة للمدير ($affiliatedManagerName) بانتظار الموافقة (${pendingReturnRequests.size})"
+                                },
+                                fontWeight = FontWeight.ExtraBold,
+                                fontSize = 12.sp,
+                                color = if (!isWorker) MaterialTheme.colorScheme.error else semantic.debtAmber
+                            )
+                        }
+                        if (orderTypeFilter != "RETURN_REQUESTED") {
+                            TextButton(
+                                onClick = { orderTypeFilter = "RETURN_REQUESTED" },
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                            ) {
+                                Text("عرض الكل", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
+
+                    if (!isWorker) {
+                        val latestReq = pendingReturnRequests.first()
+                        val formattedId = if (latestReq.invoiceId.startsWith("#") || latestReq.invoiceId.startsWith("Pre")) latestReq.invoiceId else "#${latestReq.invoiceId}"
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(
+                                    MaterialTheme.colorScheme.surface.copy(alpha = 0.85f),
+                                    RoundedCornerShape(10.dp)
+                                )
+                                .padding(horizontal = 10.dp, vertical = 8.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "الفاتورة \u200E$formattedId • ${latestReq.customerName} (${String.format(Locale.US, "%.2f", latestReq.subtotal)} $currencySymbol)",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 11.5.sp
+                                )
+                                Text(
+                                    text = "بطلب من العامل: ${latestReq.returnRequestWorkerName} • ${latestReq.returnRequestFormattedTime}" +
+                                        if (latestReq.returnRequestReason.isNotBlank()) " • السبب: ${latestReq.returnRequestReason}" else "",
+                                    fontSize = 10.5.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Button(
+                                    onClick = {
+                                        viewModel.approveWorkerInvoiceReturn(latestReq)
+                                        Toast.makeText(context, "تمت الموافقة على إرجاع الفاتورة واستعادة المخزون ✓", Toast.LENGTH_SHORT).show()
+                                    },
+                                    shape = RoundedCornerShape(8.dp),
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF047857)),
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                                    modifier = Modifier.testTag("banner_approve_return_${latestReq.invoiceId}")
+                                ) {
+                                    Text("موافقة ✓", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                }
+                                OutlinedButton(
+                                    onClick = {
+                                        viewModel.rejectWorkerInvoiceReturn(latestReq)
+                                        Toast.makeText(context, "تم رفض طلب الإرجاع", Toast.LENGTH_SHORT).show()
+                                    },
+                                    shape = RoundedCornerShape(8.dp),
+                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.error),
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                                    modifier = Modifier.testTag("banner_reject_return_${latestReq.invoiceId}")
+                                ) {
+                                    Text("رفض ✕", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.error)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         // --- 4. Invoices List or Empty Placeholder ---
         if (filteredInvoices.isEmpty()) {
             Box(
@@ -671,11 +814,12 @@ fun InvoicesArchiveScreen(viewModel: AntarSalesViewModel) {
                     contentType = { _, _ -> "archived_invoice" }
                 ) { _, inv ->
                     val dateStr = remember(inv.dateMillis) {
-                        SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(inv.dateMillis))
+                        SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US).format(Date(inv.dateMillis))
                     }
                     val isPending = inv.isPendingPreSale
                     val isCompleted = inv.isCompletedPreSale
                     val isCancelled = inv.isCancelledPreSale
+                    val isReturnReq = inv.isReturnRequested
 
                     val cashierName = remember(currentUser) {
                         currentUser?.fullName?.takeIf { it.isNotBlank() } ?: currentUser?.username?.takeIf { !it.contains("@") } ?: "Antar"
@@ -698,6 +842,7 @@ fun InvoicesArchiveScreen(viewModel: AntarSalesViewModel) {
                     }
 
                     val cardBorder = when {
+                        isReturnReq -> BorderStroke(1.5.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.75f))
                         isPending -> BorderStroke(1.5.dp, semantic.debtAmber.copy(alpha = 0.85f))
                         isCompleted -> BorderStroke(1.2.dp, Color(0xFF047857).copy(alpha = 0.55f))
                         inv.isDebt -> BorderStroke(1.dp, Color(0xFFF59E0B).copy(alpha = 0.55f))
@@ -838,7 +983,21 @@ fun InvoicesArchiveScreen(viewModel: AntarSalesViewModel) {
                                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                                 ) {
                                     // Order Status Badge
-                                    if (isPending) {
+                                    if (isReturnReq) {
+                                        Surface(
+                                            color = MaterialTheme.colorScheme.error.copy(alpha = 0.15f),
+                                            shape = RoundedCornerShape(50),
+                                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.7f))
+                                        ) {
+                                            Text(
+                                                text = "طلب مرتجع ⏳",
+                                                color = MaterialTheme.colorScheme.error,
+                                                fontSize = 10.sp,
+                                                fontWeight = FontWeight.ExtraBold,
+                                                modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
+                                            )
+                                        }
+                                    } else if (isPending) {
                                         Surface(
                                             color = semantic.debtAmber.copy(alpha = 0.18f),
                                             shape = RoundedCornerShape(50),
@@ -885,6 +1044,86 @@ fun InvoicesArchiveScreen(viewModel: AntarSalesViewModel) {
                                 }
                             }
 
+                            // Worker Return Request Alert & Manager Approval Box
+                            if (isReturnReq) {
+                                Surface(
+                                    shape = RoundedCornerShape(10.dp),
+                                    color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.35f),
+                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.55f)),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Column(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 10.dp, vertical = 8.dp),
+                                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                                    ) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Replay,
+                                                contentDescription = null,
+                                                tint = MaterialTheme.colorScheme.error,
+                                                modifier = Modifier.size(15.dp)
+                                            )
+                                            Text(
+                                                text = if (!isWorker) {
+                                                    "طلب إرجاع فاتورة من العامل: ${inv.returnRequestWorkerName}"
+                                                } else {
+                                                    "تم إرسال طلب الإرجاع إلى المدير (${inv.returnRequestManagerName}) وبانتظار موافقته"
+                                                },
+                                                fontSize = 11.5.sp,
+                                                fontWeight = FontWeight.ExtraBold,
+                                                color = MaterialTheme.colorScheme.error
+                                            )
+                                        }
+                                        Text(
+                                            text = "توقيت الطلب: ${inv.returnRequestFormattedTime}" +
+                                                if (inv.returnRequestReason.isNotBlank()) " • السبب: ${inv.returnRequestReason}" else "",
+                                            fontSize = 10.5.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                        if (!isWorker) {
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                            ) {
+                                                Button(
+                                                    onClick = {
+                                                        viewModel.approveWorkerInvoiceReturn(inv)
+                                                        Toast.makeText(context, "تمت الموافقة على إرجاع الفاتورة واستعادة المخزون ✓", Toast.LENGTH_SHORT).show()
+                                                    },
+                                                    shape = RoundedCornerShape(8.dp),
+                                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF047857)),
+                                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                                                    modifier = Modifier
+                                                        .weight(1.3f)
+                                                        .testTag("card_approve_return_btn_${inv.invoiceId}")
+                                                ) {
+                                                    Text("موافقة واستعادة المخزون ✓", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                                }
+                                                OutlinedButton(
+                                                    onClick = {
+                                                        viewModel.rejectWorkerInvoiceReturn(inv)
+                                                        Toast.makeText(context, "تم رفض طلب الإرجاع", Toast.LENGTH_SHORT).show()
+                                                    },
+                                                    shape = RoundedCornerShape(8.dp),
+                                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.error),
+                                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                                                    modifier = Modifier
+                                                        .weight(0.9f)
+                                                        .testTag("card_reject_return_btn_${inv.invoiceId}")
+                                                ) {
+                                                    Text("رفض الطلب ✕", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.error)
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
                             // Warehouse Pending Dispatch Alert & Action (if pending)
                             if (isPending) {
                                 Surface(
@@ -919,7 +1158,7 @@ fun InvoicesArchiveScreen(viewModel: AntarSalesViewModel) {
                                                 )
                                             }
                                             if (inv.expectedDeliveryDate > 0) {
-                                                val expDateStr = SimpleDateFormat("dd/MM/yyyy", Locale.getDefault()).format(Date(inv.expectedDeliveryDate))
+                                                val expDateStr = SimpleDateFormat("dd/MM/yyyy", Locale.US).format(Date(inv.expectedDeliveryDate))
                                                 Text(
                                                     text = "موعد الاستلام المتوقع: $expDateStr",
                                                     fontSize = 10.sp,
@@ -1049,31 +1288,60 @@ fun InvoicesArchiveScreen(viewModel: AntarSalesViewModel) {
                                     )
                                 }
 
-                                // 4. Fast Refund / Return
+                                // 4. Fast Refund / Return (Worker requests manager approval; Manager executes/approves)
                                 if (!isPending) {
-                                    OutlinedButton(
-                                        onClick = { refundInvoiceTarget = inv },
-                                        shape = RoundedCornerShape(10.dp),
-                                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.5f)),
-                                        colors = ButtonDefaults.outlinedButtonColors(
-                                            contentColor = MaterialTheme.colorScheme.error
-                                        ),
-                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp),
-                                        modifier = Modifier.weight(0.9f)
-                                    ) {
-                                        Icon(
-                                            Icons.Default.Replay,
-                                            contentDescription = null,
-                                            tint = MaterialTheme.colorScheme.error,
-                                            modifier = Modifier.size(14.dp)
-                                        )
-                                        Spacer(Modifier.width(3.dp))
-                                        Text(
-                                            "مرتجع",
-                                            fontSize = 11.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            color = MaterialTheme.colorScheme.error
-                                        )
+                                    if (isReturnReq && isWorker) {
+                                        OutlinedButton(
+                                            onClick = {
+                                                Toast.makeText(
+                                                    context,
+                                                    "طلب الإرجاع مرسل بالفعل وبانتظار موافقة المدير ($affiliatedManagerName) ⏳",
+                                                    Toast.LENGTH_SHORT
+                                                ).show()
+                                            },
+                                            shape = RoundedCornerShape(10.dp),
+                                            border = BorderStroke(1.dp, semantic.debtAmber.copy(alpha = 0.7f)),
+                                            colors = ButtonDefaults.outlinedButtonColors(
+                                                contentColor = semantic.debtAmber
+                                            ),
+                                            contentPadding = PaddingValues(horizontal = 6.dp, vertical = 6.dp),
+                                            modifier = Modifier.weight(1.05f)
+                                        ) {
+                                            Text(
+                                                "بانتظار المدير ⏳",
+                                                fontSize = 10.sp,
+                                                fontWeight = FontWeight.ExtraBold,
+                                                color = semantic.debtAmber,
+                                                maxLines = 1
+                                            )
+                                        }
+                                    } else {
+                                        OutlinedButton(
+                                            onClick = { refundInvoiceTarget = inv },
+                                            shape = RoundedCornerShape(10.dp),
+                                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.5f)),
+                                            colors = ButtonDefaults.outlinedButtonColors(
+                                                contentColor = MaterialTheme.colorScheme.error
+                                            ),
+                                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp),
+                                            modifier = Modifier
+                                                .weight(0.9f)
+                                                .testTag("invoice_refund_btn_${inv.invoiceId}")
+                                        ) {
+                                            Icon(
+                                                Icons.Default.Replay,
+                                                contentDescription = null,
+                                                tint = MaterialTheme.colorScheme.error,
+                                                modifier = Modifier.size(14.dp)
+                                            )
+                                            Spacer(Modifier.width(3.dp))
+                                            Text(
+                                                if (isReturnReq && !isWorker) "موافقة" else "مرتجع",
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = MaterialTheme.colorScheme.error
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -1084,8 +1352,9 @@ fun InvoicesArchiveScreen(viewModel: AntarSalesViewModel) {
         }
     }
 
-    // Safe Refund Confirmation Dialog
+    // Safe Refund Confirmation / Worker Return Request Dialog
     refundInvoiceTarget?.let { target ->
+        var workerReturnReason by remember(target.invoiceId) { mutableStateOf("") }
         AlertDialog(
             onDismissRequest = { refundInvoiceTarget = null },
             icon = {
@@ -1103,7 +1372,11 @@ fun InvoicesArchiveScreen(viewModel: AntarSalesViewModel) {
             },
             title = {
                 Text(
-                    text = "تأكيد إرجاع الفاتورة واستعادة المخزون",
+                    text = when {
+                        isWorker -> "إرسال طلب إرجاع الفاتورة للمدير"
+                        target.isReturnRequested -> "موافقة المدير على طلب إرجاع الفاتورة"
+                        else -> "تأكيد إرجاع الفاتورة واستعادة المخزون"
+                    },
                     fontWeight = FontWeight.ExtraBold,
                     fontSize = 16.sp,
                     textAlign = TextAlign.Center
@@ -1115,10 +1388,22 @@ fun InvoicesArchiveScreen(viewModel: AntarSalesViewModel) {
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     val formattedId = if (target.invoiceId.startsWith("#") || target.invoiceId.startsWith("Pre")) target.invoiceId else "#${target.invoiceId}"
-                    Text(
-                        text = "هل أنت متأكد من رغبتك في إرجاع الفاتورة رقم \u200E$formattedId الخاصة بالعميل ${target.customerName}؟",
-                        fontSize = 13.sp
-                    )
+                    if (isWorker) {
+                        Text(
+                            text = "سيتم إرسال إشعار فوري إلى المدير التابع له ($affiliatedManagerName) للموافقة على إرجاع الفاتورة رقم \u200E$formattedId الخاصة بالعميل ${target.customerName}.",
+                            fontSize = 13.sp
+                        )
+                    } else if (target.isReturnRequested) {
+                        Text(
+                            text = "قام العامل (${target.returnRequestWorkerName}) بطلب إرجاع الفاتورة رقم \u200E$formattedId الخاصة بالعميل ${target.customerName}. هل توافق على الإرجاع؟",
+                            fontSize = 13.sp
+                        )
+                    } else {
+                        Text(
+                            text = "هل أنت متأكد من رغبتك في إرجاع الفاتورة رقم \u200E$formattedId الخاصة بالعميل ${target.customerName}؟",
+                            fontSize = 13.sp
+                        )
+                    }
 
                     Surface(
                         shape = RoundedCornerShape(10.dp),
@@ -1139,39 +1424,125 @@ fun InvoicesArchiveScreen(viewModel: AntarSalesViewModel) {
                                 text = "• طريقة الدفع: ${if (target.isDebt) "آجل / دين" else "نقدي"}",
                                 fontSize = 11.5.sp
                             )
-                            Text(
-                                text = "• سيتم إعادة جميع كميات المنتجات المباعة (${target.totalQuantity} قطعة) إلى رصيد المخزون فوراً.",
-                                fontSize = 11.sp,
-                                color = Color(0xFF047857),
-                                fontWeight = FontWeight.SemiBold
-                            )
-                            if (target.isDebt) {
+                            if (isWorker) {
                                 Text(
-                                    text = "• سيتم خصم هذا المبلغ من مديونية حساب العميل.",
+                                    text = "• المدير المسؤول عن الموافقة: $affiliatedManagerName",
+                                    fontSize = 11.5.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF0284C7)
+                                )
+                                Text(
+                                    text = "• سيتم إعادة كميات المنتجات (${target.totalQuantity} قطعة) إلى المخزون فور موافقة المدير.",
                                     fontSize = 11.sp,
-                                    color = Color(0xFFD97706),
+                                    color = Color(0xFF047857),
                                     fontWeight = FontWeight.SemiBold
                                 )
+                            } else {
+                                if (target.isReturnRequested) {
+                                    Text(
+                                        text = "• مقدم الطلب: العامل ${target.returnRequestWorkerName} (${target.returnRequestFormattedTime})",
+                                        fontSize = 11.5.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    if (target.returnRequestReason.isNotBlank()) {
+                                        Text(
+                                            text = "• سبب الإرجاع: ${target.returnRequestReason}",
+                                            fontSize = 11.5.sp,
+                                            color = MaterialTheme.colorScheme.error
+                                        )
+                                    }
+                                }
+                                Text(
+                                    text = "• سيتم إعادة جميع كميات المنتجات المباعة (${target.totalQuantity} قطعة) إلى رصيد المخزون فوراً.",
+                                    fontSize = 11.sp,
+                                    color = Color(0xFF047857),
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                if (target.isDebt) {
+                                    Text(
+                                        text = "• سيتم خصم هذا المبلغ من مديونية حساب العميل.",
+                                        fontSize = 11.sp,
+                                        color = Color(0xFFD97706),
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                }
                             }
                         }
+                    }
+
+                    if (isWorker) {
+                        OutlinedTextField(
+                            value = workerReturnReason,
+                            onValueChange = { workerReturnReason = it },
+                            label = { Text("سبب الإرجاع للمدير (اختياري)", fontSize = 12.sp) },
+                            placeholder = { Text("مثال: طلب العميل استبدال السلعة...", fontSize = 11.5.sp) },
+                            singleLine = true,
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("worker_return_reason_input")
+                        )
                     }
                 }
             },
             confirmButton = {
                 Button(
                     onClick = {
-                        viewModel.refundInvoice(target)
-                        Toast.makeText(context, "تم إرجاع الفاتورة واستعادة كميات المخزون بنجاح ✓", Toast.LENGTH_SHORT).show()
+                        if (isWorker) {
+                            viewModel.requestInvoiceReturnByWorker(target, workerReturnReason.trim())
+                            Toast.makeText(
+                                context,
+                                "تم إرسال إشعار طلب الإرجاع للمدير ($affiliatedManagerName) بنجاح 🔔",
+                                Toast.LENGTH_SHORT
+                            ).show()
+                        } else if (target.isReturnRequested) {
+                            viewModel.approveWorkerInvoiceReturn(target)
+                            Toast.makeText(
+                                context,
+                                "تمت الموافقة على إرجاع الفاتورة واستعادة كميات المخزون ✓",
+                                Toast.LENGTH_SHORT
+                            ).show()
+                        } else {
+                            viewModel.refundInvoice(target)
+                            Toast.makeText(
+                                context,
+                                "تم إرجاع الفاتورة واستعادة كميات المخزون بنجاح ✓",
+                                Toast.LENGTH_SHORT
+                            ).show()
+                        }
                         refundInvoiceTarget = null
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (target.isReturnRequested && !isWorker) Color(0xFF047857) else MaterialTheme.colorScheme.error
+                    )
                 ) {
-                    Text("تأكيد الإرجاع واستعادة المخزون", fontWeight = FontWeight.Bold)
+                    Text(
+                        text = when {
+                            isWorker -> "إرسال طلب الإرجاع للمدير 🔔"
+                            target.isReturnRequested -> "موافقة واستعادة المخزون ✓"
+                            else -> "تأكيد الإرجاع واستعادة المخزون"
+                        },
+                        fontWeight = FontWeight.Bold
+                    )
                 }
             },
             dismissButton = {
-                TextButton(onClick = { refundInvoiceTarget = null }) {
-                    Text("إلغاء")
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    if (target.isReturnRequested && !isWorker) {
+                        OutlinedButton(
+                            onClick = {
+                                viewModel.rejectWorkerInvoiceReturn(target)
+                                Toast.makeText(context, "تم رفض طلب الإرجاع", Toast.LENGTH_SHORT).show()
+                                refundInvoiceTarget = null
+                            },
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.error)
+                        ) {
+                            Text("رفض الطلب ✕", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                    TextButton(onClick = { refundInvoiceTarget = null }) {
+                        Text("إلغاء")
+                    }
                 }
             }
         )
@@ -2197,7 +2568,7 @@ fun PurchaseInvoicesScreen(viewModel: AntarSalesViewModel) {
                     contentType = { _, _ -> "purchase_invoice" }
                 ) { _, inv ->
                     val dateStr = remember(inv.dateMillis) {
-                        SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(inv.dateMillis))
+                        SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US).format(Date(inv.dateMillis))
                     }
                     val hasDebt = inv.remainingDebt > 0.009
                     Card(
@@ -3405,7 +3776,7 @@ private fun PurchaseInvoiceDetailsDialog(
 ) {
     val items = remember(invoice.itemsJson) { invoice.getItems() }
     val dateStr = remember(invoice.dateMillis) {
-        SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(invoice.dateMillis))
+        SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US).format(Date(invoice.dateMillis))
     }
     var paymentInput by remember(invoice.remainingDebt) {
         mutableStateOf(
@@ -4722,7 +5093,7 @@ fun CustomersScreen(viewModel: AntarSalesViewModel) {
                                     horizontalArrangement = Arrangement.SpaceBetween,
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    val formattedDate = SimpleDateFormat("yyyy/MM/dd HH:mm", Locale.getDefault()).format(Date(inv.dateMillis))
+                                    val formattedDate = SimpleDateFormat("yyyy/MM/dd HH:mm", Locale.US).format(Date(inv.dateMillis))
                                     Column {
                                         val formattedId = if (inv.invoiceId.startsWith("#") || inv.invoiceId.startsWith("Pre")) inv.invoiceId else "#${inv.invoiceId}"
                                         Text("فاتورة $formattedId", fontWeight = FontWeight.Bold, fontSize = 11.5.sp)

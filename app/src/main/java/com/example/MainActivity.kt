@@ -77,9 +77,11 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.ShoppingBag
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -163,9 +165,11 @@ import com.example.ui.screens.TopBarLowStockBellButton
 import com.example.ui.screens.PromotionsScreen
 import com.example.ui.screens.ExpensesScreen
 import com.example.ui.screens.ExpiryAndWasteScreen
+import com.example.ui.screens.DailyZReportScreen
 import androidx.compose.material.icons.filled.LocalOffer
 import androidx.compose.material.icons.filled.Payments
 import androidx.compose.material.icons.filled.DeleteSweep
+import androidx.compose.material.icons.filled.FactCheck
 import com.example.ui.theme.AFStoreTheme
 import com.example.ui.theme.AppThemeMode
 import com.example.ui.theme.AppThemePalette
@@ -185,6 +189,7 @@ enum class MainAppTab(
     POS("الكاشير", "نقطة البيع الفورية السريعة", Icons.Default.PointOfSale, "tab_pos", true),
     PRE_SALE_POS("البيع المسبق", "أخذ طلبيات العملاء للمستودع", Icons.Default.EventNote, "tab_pre_sale_pos", true),
     PRE_SALES_ORDERS("طلبات البيع المسبق", "إدارة وتسليم طلبيات المستودع", Icons.Default.LocalShipping, "tab_pre_sales_orders", false),
+    DAILY_Z_REPORT("إغلاق الصندوق (Z-Report)", "ملخص الإغلاق اليومي الذكي وإرسال واتساب للمالك", Icons.Default.FactCheck, "tab_daily_z_report", false),
     CUSTOMERS("العملاء", "حسابات العملاء والديون", Icons.Default.Group, "tab_customers", false),
     LOYALTY("ولاء العملاء", "لوحة تحكم الولاء ونقاط المكافآت", Icons.Default.Star, "tab_loyalty", false),
     SETTINGS("الإعدادات", "إعدادات المتجر والسحابة", Icons.Default.Settings, "tab_settings", true),
@@ -203,7 +208,7 @@ enum class MainAppTab(
 
 class MainActivity : ComponentActivity() {
     override fun attachBaseContext(newBase: android.content.Context) {
-        val locale = java.util.Locale("ar")
+        val locale = java.util.Locale.forLanguageTag("ar-DZ-u-nu-latn")
         java.util.Locale.setDefault(locale)
         val config = android.content.res.Configuration(newBase.resources.configuration)
         config.setLocale(locale)
@@ -214,7 +219,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         try {
-            val locale = java.util.Locale("ar")
+            val locale = java.util.Locale.forLanguageTag("ar-DZ-u-nu-latn")
             java.util.Locale.setDefault(locale)
             val config = resources.configuration
             config.setLocale(locale)
@@ -231,6 +236,7 @@ class MainActivity : ComponentActivity() {
         val repository = AntarRepository(db.storeDao())
         val factory = AntarSalesViewModelFactory(application, repository)
         val openReorderFromNotification = intent?.getBooleanExtra("open_reorder_alerts_screen", false) == true
+        val openReturnRequestsFromNotification = intent?.getBooleanExtra("open_invoices_return_requests", false) == true
 
         setContent {
             val salesViewModel: AntarSalesViewModel = viewModel(factory = factory)
@@ -246,7 +252,8 @@ class MainActivity : ComponentActivity() {
             ) {
                 AFStoreMainApp(
                     viewModel = salesViewModel,
-                    openReorderAlertsInitially = openReorderFromNotification
+                    openReorderAlertsInitially = openReorderFromNotification,
+                    openReturnRequestsInitially = openReturnRequestsFromNotification
                 )
             }
         }
@@ -257,7 +264,8 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun AFStoreMainApp(
     viewModel: AntarSalesViewModel,
-    openReorderAlertsInitially: Boolean = false
+    openReorderAlertsInitially: Boolean = false,
+    openReturnRequestsInitially: Boolean = false
 ) {
     var selectedTab by rememberSaveable { mutableStateOf(MainAppTab.POS) }
     var showApkTempModal by rememberSaveable { mutableStateOf(false) }
@@ -278,6 +286,7 @@ fun AFStoreMainApp(
     val outOfStockCount = remember(lowStockProducts) { lowStockProducts.count { it.stock <= 0 } }
     val products by viewModel.products.collectAsState(initial = emptyList())
     val damagedItems by viewModel.damagedItems.collectAsState()
+    val pendingReturnRequests by viewModel.pendingReturnRequests.collectAsState()
 
     val themeMode by viewModel.themeMode.collectAsState()
     val themePalette by viewModel.themePalette.collectAsState()
@@ -379,8 +388,10 @@ fun AFStoreMainApp(
             lastNotifiedLiteCount = currentLiteCount
         }
         val currentIdentityKey = "${myStaffAccount.userId}:${myStaffAccount.role}:${myStaffAccount.isOwner}"
-        LaunchedEffect(currentIdentityKey, openReorderAlertsInitially) {
-            if (openReorderAlertsInitially) {
+        LaunchedEffect(currentIdentityKey, openReorderAlertsInitially, openReturnRequestsInitially) {
+            if (openReturnRequestsInitially) {
+                selectedTab = MainAppTab.INVOICES
+            } else if (openReorderAlertsInitially) {
                 selectedTab = MainAppTab.REORDER_ALERTS
             } else if (lastRoutedIdentityKey != currentIdentityKey) {
                 lastRoutedIdentityKey = currentIdentityKey
@@ -415,6 +426,7 @@ fun AFStoreMainApp(
                         MainAppTab.REORDER_ALERTS -> workerPerms.canManageInventory || workerPerms.canManagePurchaseInvoices
                         MainAppTab.EXPENSES -> workerPerms.canViewReports || myStaffAccount.isManagerOrAdmin
                         MainAppTab.EXPIRY_AND_WASTE -> workerPerms.canManageInventory || myStaffAccount.isManagerOrAdmin
+                        MainAppTab.DAILY_Z_REPORT -> workerPerms.canMakeSales || workerPerms.canViewReports || myStaffAccount.isManagerOrAdmin
                         MainAppTab.REPORTS -> workerPerms.canViewReports
                     }
                 }
@@ -518,6 +530,47 @@ fun AFStoreMainApp(
                                         showPendingManagerRequestsModal = true
                                     }
                                 )
+                            }
+                            if (myStaffAccount.isManagerOrAdmin && pendingReturnRequests.isNotEmpty()) {
+                                Surface(
+                                    shape = RoundedCornerShape(12.dp),
+                                    color = MaterialTheme.colorScheme.error.copy(alpha = 0.14f),
+                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.7f)),
+                                    modifier = Modifier
+                                        .padding(end = 4.dp)
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .clickable {
+                                            showLogoMenu = false
+                                            showQuickThemeMenu = false
+                                            selectedTab = MainAppTab.INVOICES
+                                        }
+                                        .testTag("top_bar_return_requests_btn")
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.AutoMirrored.Filled.ReceiptLong,
+                                            contentDescription = "طلبات إرجاع الفواتير",
+                                            tint = MaterialTheme.colorScheme.error,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                        Surface(
+                                            shape = RoundedCornerShape(50),
+                                            color = MaterialTheme.colorScheme.error
+                                        ) {
+                                            Text(
+                                                text = pendingReturnRequests.size.toString(),
+                                                color = Color.White,
+                                                fontSize = 10.sp,
+                                                fontWeight = FontWeight.ExtraBold,
+                                                modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
+                                            )
+                                        }
+                                    }
+                                }
                             }
                             TopBarLowStockBellButton(
                                 lowStockCount = lowStockProducts.size,
@@ -865,6 +918,62 @@ fun AFStoreMainApp(
                         onOpenApprovalModal = onOpenStaffManagement
                     )
 
+                    AnimatedVisibility(visible = myStaffAccount.isManagerOrAdmin && pendingReturnRequests.isNotEmpty() && selectedTab != MainAppTab.INVOICES) {
+                        val latestReq = pendingReturnRequests.firstOrNull()
+                        if (latestReq != null) {
+                            Surface(
+                                color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.45f),
+                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.65f)),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 12.dp, vertical = 4.dp)
+                                    .testTag("global_manager_return_request_banner"),
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = "🔔 طلب إرجاع فاتورة من العامل (${latestReq.returnRequestWorkerName})",
+                                            fontWeight = FontWeight.ExtraBold,
+                                            fontSize = 12.sp,
+                                            color = MaterialTheme.colorScheme.error
+                                        )
+                                        Text(
+                                            text = "الفاتورة ${latestReq.invoiceId} • ${latestReq.customerName} (${String.format(Locale.US, "%.2f", latestReq.subtotal)} $currencySymbol)",
+                                            fontSize = 11.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                        Button(
+                                            onClick = {
+                                                viewModel.approveWorkerInvoiceReturn(latestReq)
+                                            },
+                                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF047857)),
+                                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                                            shape = RoundedCornerShape(8.dp)
+                                        ) {
+                                            Text("موافقة ✓", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                        }
+                                        OutlinedButton(
+                                            onClick = { selectedTab = MainAppTab.INVOICES },
+                                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                                            shape = RoundedCornerShape(8.dp)
+                                        ) {
+                                            Text("مراجعة", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     AnimatedVisibility(visible = statusMessage != null) {
                         Surface(
                             color = MaterialTheme.colorScheme.primaryContainer,
@@ -994,7 +1103,17 @@ fun AFStoreMainApp(
                                         currentUser = currentUser,
                                         onNavigateBack = { selectedTab = MainAppTab.POS }
                                     )
-                                    MainAppTab.REPORTS -> ReportsScreen(viewModel = viewModel)
+                                    MainAppTab.DAILY_Z_REPORT -> DailyZReportScreen(
+                                        viewModel = viewModel,
+                                        onNavigateBack = { selectedTab = MainAppTab.POS },
+                                        onNavigateToExpenses = { selectedTab = MainAppTab.EXPENSES },
+                                        onNavigateToDebts = { selectedTab = MainAppTab.DEBTS },
+                                        onNavigateToInvoices = { selectedTab = MainAppTab.INVOICES }
+                                    )
+                                    MainAppTab.REPORTS -> ReportsScreen(
+                                        viewModel = viewModel,
+                                        onOpenZReport = { selectedTab = MainAppTab.DAILY_Z_REPORT }
+                                    )
                                     MainAppTab.PROMOTIONS -> PromotionsScreen(
                                         viewModel = viewModel,
                                         onNavigateBack = { selectedTab = MainAppTab.POS }

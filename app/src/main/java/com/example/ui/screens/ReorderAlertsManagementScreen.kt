@@ -207,6 +207,57 @@ object LowStockNotificationManager {
             // Safe fallback on restricted test environments
         }
     }
+
+    fun postWorkerReturnRequestSystemNotification(
+        context: Context,
+        invoiceId: String,
+        customerName: String,
+        workerName: String,
+        subtotalFormatted: String,
+        currencySymbol: String,
+        reason: String
+    ) {
+        try {
+            ensureNotificationChannel(context)
+            if (!hasNotificationPermission(context)) return
+
+            val openIntent = Intent(context, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                putExtra("open_invoices_return_requests", true)
+            }
+            val pendingIntent = PendingIntent.getActivity(
+                context,
+                9915,
+                openIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+
+            val title = "🔔 طلب موافقة على إرجاع فاتورة ($invoiceId)"
+            val summary = "العامل $workerName يطلب إرجاع فاتورة العميل $customerName بقيمة $subtotalFormatted $currencySymbol"
+            val expandedText = buildString {
+                appendLine(summary)
+                if (reason.isNotBlank()) {
+                    appendLine("سبب الإرجاع: $reason")
+                }
+                append("اضغط لمراجعة الطلب والموافقة على إرجاع الفاتورة واستعادة المخزون.")
+            }
+
+            val notification = NotificationCompat.Builder(context, CHANNEL_ID)
+                .setSmallIcon(android.R.drawable.ic_dialog_info)
+                .setContentTitle(title)
+                .setContentText(summary)
+                .setStyle(NotificationCompat.BigTextStyle().bigText(expandedText))
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .setCategory(NotificationCompat.CATEGORY_MESSAGE)
+                .setAutoCancel(true)
+                .setContentIntent(pendingIntent)
+                .build()
+
+            NotificationManagerCompat.from(context)
+                .notify(NOTIFICATION_ID_BASE + 500 + (invoiceId.hashCode() and 0x7FF), notification)
+        } catch (_: Exception) {
+        }
+    }
 }
 
 @Composable

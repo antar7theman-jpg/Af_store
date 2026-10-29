@@ -1572,7 +1572,7 @@ fun ProductMovementHistoryDialog(
                             val isAddition = movement.type == "ADDITION"
                             val accentColor = if (isAddition) Color(0xFF10B981) else Color(0xFFEF4444)
                             val formattedDate = remember(movement.timestamp) {
-                                SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault())
+                                SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US)
                                     .format(Date(movement.timestamp))
                             }
 

@@ -549,6 +549,14 @@ fun LiveDashboardScreen(
                     onNavigateToTab = onNavigateToTab
                 )
             }
+
+            // 3b. Smart Daily End-of-Day Z-Report Quick Summary & 1-Tap WhatsApp to Owner
+            item(key = "dashboard_z_report_quick_card", contentType = "z_report_card") {
+                DailyZReportQuickSummaryCard(
+                    viewModel = viewModel,
+                    onOpenFullZReportScreen = { onNavigateToTab(MainAppTab.DAILY_Z_REPORT) }
+                )
+            }
         } else {
             item(key = "restricted_reports_card", contentType = "restricted") {
                 val semantic = LocalAFStoreSemanticColors.current

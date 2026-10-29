@@ -3,6 +3,7 @@ package com.example.ui.screens
 import android.content.Intent
 import android.graphics.Bitmap
 import android.net.Uri
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
@@ -44,6 +45,7 @@ import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Inventory2
 import androidx.compose.material.icons.filled.PhotoLibrary
+import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.Search
@@ -95,6 +97,7 @@ import com.example.data.models.Product
 import com.example.data.models.SpoilageReason
 import com.example.ui.theme.LocalAFStoreSemanticColors
 import com.example.ui.viewmodels.AntarSalesViewModel
+import com.example.utils.ProductCloudImageHelper
 import kotlinx.coroutines.launch
 import java.io.File
 import java.text.SimpleDateFormat
@@ -120,6 +123,7 @@ fun ExpiryAndWasteScreen(
 
     // Dialog States
     var showRecordDamageDialog by remember { mutableStateOf(false) }
+    var showMainBarcodeScanner by remember { mutableStateOf(false) }
     var damagedItemToDelete by remember { mutableStateOf<DamagedItemRecord?>(null) }
     var previewImagePath by remember { mutableStateOf<String?>(null) }
 
@@ -194,33 +198,64 @@ fun ExpiryAndWasteScreen(
                                 )
                             }
                             Text(
-                                text = "توثيق البضائع التالفة وخسائر المخزون بالصور",
+                                text = "توثيق ومزامنة البضائع التالفة وصورها سحابياً ☁️",
                                 fontSize = 11.sp,
                                 color = semantic.textSecondary
                             )
                         }
                     }
 
-                    // Share report button
-                    IconButton(
-                        onClick = {
-                            val summary = buildDamagedReportShareText(
-                                damagedItems = damagedItems,
-                                currencySymbol = currencySymbol
-                            )
-                            val sendIntent = Intent().apply {
-                                action = Intent.ACTION_SEND
-                                putExtra(Intent.EXTRA_TEXT, summary)
-                                type = "text/plain"
-                            }
-                            context.startActivity(Intent.createChooser(sendIntent, "مشاركة تقرير الهالك والتوالف"))
-                        }
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
-                        Icon(
-                            Icons.Default.Share,
-                            contentDescription = "مشاركة التقرير",
-                            tint = MaterialTheme.colorScheme.primary
-                        )
+                        Surface(
+                            onClick = { viewModel.syncAllDamagedGoodsToCloud() },
+                            shape = RoundedCornerShape(10.dp),
+                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.4f))
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Icon(
+                                    Icons.Default.Refresh,
+                                    contentDescription = "مزامنة التوالف والصور",
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(15.dp)
+                                )
+                                Text(
+                                    text = "مزامنة ☁️",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                        }
+
+                        // Share report button
+                        IconButton(
+                            onClick = {
+                                val summary = buildDamagedReportShareText(
+                                    damagedItems = damagedItems,
+                                    currencySymbol = currencySymbol
+                                )
+                                val sendIntent = Intent().apply {
+                                    action = Intent.ACTION_SEND
+                                    putExtra(Intent.EXTRA_TEXT, summary)
+                                    type = "text/plain"
+                                }
+                                context.startActivity(Intent.createChooser(sendIntent, "مشاركة تقرير الهالك والتوالف"))
+                            }
+                        ) {
+                            Icon(
+                                Icons.Default.Share,
+                                contentDescription = "مشاركة التقرير",
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                        }
                     }
                 }
 
@@ -319,33 +354,48 @@ fun ExpiryAndWasteScreen(
             // Search and Reason Filter Row
             item {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(
-                        value = searchQuery,
-                        onValueChange = { searchQuery = it },
-                        leadingIcon = {
-                            Icon(
-                                Icons.Default.Search,
-                                contentDescription = null,
-                                tint = semantic.textSecondary
-                            )
-                        },
-                        trailingIcon = {
-                            if (searchQuery.isNotEmpty()) {
-                                IconButton(onClick = { searchQuery = "" }) {
-                                    Icon(Icons.Default.Close, contentDescription = "مسح")
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        OutlinedTextField(
+                            value = searchQuery,
+                            onValueChange = { searchQuery = it },
+                            leadingIcon = {
+                                Icon(
+                                    Icons.Default.Search,
+                                    contentDescription = null,
+                                    tint = semantic.textSecondary
+                                )
+                            },
+                            trailingIcon = {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    if (searchQuery.isNotEmpty()) {
+                                        IconButton(onClick = { searchQuery = "" }) {
+                                            Icon(Icons.Default.Close, contentDescription = "مسح")
+                                        }
+                                    }
+                                    IconButton(onClick = { showMainBarcodeScanner = true }) {
+                                        Icon(
+                                            Icons.Default.QrCodeScanner,
+                                            contentDescription = "مسح باركود بالكاميرا",
+                                            tint = MaterialTheme.colorScheme.primary
+                                        )
+                                    }
                                 }
-                            }
-                        },
-                        placeholder = {
-                            Text(
-                                text = "بحث في سجلات الهالك والسلع والسبب والملاحظات...",
-                                fontSize = 12.sp
-                            )
-                        },
-                        singleLine = true,
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier.fillMaxWidth()
-                    )
+                            },
+                            placeholder = {
+                                Text(
+                                    text = "بحث في سجلات الهالك أو مسح الباركود...",
+                                    fontSize = 12.sp
+                                )
+                            },
+                            singleLine = true,
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
 
                     // Reason Filter Chips
                     Row(
@@ -570,6 +620,18 @@ fun ExpiryAndWasteScreen(
             }
         )
     }
+
+    if (showMainBarcodeScanner) {
+        SimpleBarcodeCaptureDialog(
+            title = "مسح باركود السلعة للبحث في سجل التوالف 📷",
+            onBarcodeScanned = { scannedCode ->
+                searchQuery = scannedCode
+                showMainBarcodeScanner = false
+                Toast.makeText(context, "تم مسح الباركود: $scannedCode", Toast.LENGTH_SHORT).show()
+            },
+            onDismiss = { showMainBarcodeScanner = false }
+        )
+    }
 }
 
 @Composable
@@ -635,7 +697,24 @@ private fun DamagedItemCardWithPhoto(
     onImageClick: (String) -> Unit,
     onDelete: () -> Unit
 ) {
+    val context = LocalContext.current
     val semantic = LocalAFStoreSemanticColors.current
+
+    val resolvedPhotoFile = remember(damagedItem.imagePath, damagedItem.imageUrl, damagedItem.id) {
+        val directFile = if (damagedItem.imagePath.isNotBlank()) File(damagedItem.imagePath) else null
+        if (directFile != null && directFile.exists()) {
+            directFile
+        } else if (damagedItem.imageUrl.isNotBlank()) {
+            val decodedPath = ProductCloudImageHelper.decodeBase64ToLocalFile(
+                context = context,
+                base64String = damagedItem.imageUrl,
+                identifier = "dmg_${damagedItem.id}"
+            )
+            if (decodedPath != null) File(decodedPath) else null
+        } else {
+            null
+        }
+    }
 
     Card(
         shape = RoundedCornerShape(14.dp),
@@ -670,14 +749,32 @@ private fun DamagedItemCardWithPhoto(
                     }
 
                     Column {
-                        Text(
-                            text = damagedItem.productName,
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Bold,
-                            color = semantic.textPrimary,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Text(
+                                text = damagedItem.productName,
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = semantic.textPrimary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f, fill = false)
+                            )
+                            Surface(
+                                shape = RoundedCornerShape(6.dp),
+                                color = Color(0xFF10B981).copy(alpha = 0.12f)
+                            ) {
+                                Text(
+                                    text = if (resolvedPhotoFile != null) "☁️ صورة متزامنة" else "☁️ متزامن",
+                                    fontSize = 9.5.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF10B981),
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                )
+                            }
+                        }
                         Text(
                             text = "${damagedItem.formattedDate} - ${damagedItem.formattedTime} | بواسطة: ${damagedItem.recordedBy.ifBlank { "الإدارة" }}",
                             fontSize = 10.5.sp,
@@ -752,38 +849,35 @@ private fun DamagedItemCardWithPhoto(
                     }
                 }
 
-                // Photo Thumbnail if attached
-                if (damagedItem.imagePath.isNotBlank()) {
-                    val file = remember(damagedItem.imagePath) { File(damagedItem.imagePath) }
-                    if (file.exists()) {
+                // Photo Thumbnail if attached (local or cloud-synced)
+                if (resolvedPhotoFile != null && resolvedPhotoFile.exists()) {
+                    Box(
+                        modifier = Modifier
+                            .size(56.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .border(1.dp, semantic.cardBorder, RoundedCornerShape(10.dp))
+                            .clickable { onImageClick(resolvedPhotoFile.absolutePath) }
+                    ) {
+                        AsyncImage(
+                            model = resolvedPhotoFile,
+                            contentDescription = "صورة التالف",
+                            modifier = Modifier.fillMaxSize(),
+                            contentScale = ContentScale.Crop
+                        )
                         Box(
                             modifier = Modifier
-                                .size(56.dp)
-                                .clip(RoundedCornerShape(10.dp))
-                                .border(1.dp, semantic.cardBorder, RoundedCornerShape(10.dp))
-                                .clickable { onImageClick(damagedItem.imagePath) }
+                                .fillMaxSize()
+                                .background(Color.Black.copy(alpha = 0.25f)),
+                            contentAlignment = Alignment.BottomEnd
                         ) {
-                            AsyncImage(
-                                model = file,
-                                contentDescription = "صورة التالف",
-                                modifier = Modifier.fillMaxSize(),
-                                contentScale = ContentScale.Crop
-                            )
-                            Box(
+                            Icon(
+                                Icons.Default.ZoomIn,
+                                contentDescription = null,
+                                tint = Color.White,
                                 modifier = Modifier
-                                    .fillMaxSize()
-                                    .background(Color.Black.copy(alpha = 0.25f)),
-                                contentAlignment = Alignment.BottomEnd
-                            ) {
-                                Icon(
-                                    Icons.Default.ZoomIn,
-                                    contentDescription = null,
-                                    tint = Color.White,
-                                    modifier = Modifier
-                                        .size(16.dp)
-                                        .padding(2.dp)
-                                )
-                            }
+                                    .size(16.dp)
+                                    .padding(2.dp)
+                            )
                         }
                     }
                 }
@@ -814,6 +908,7 @@ private fun ComprehensiveRecordDamagedDialog(
 
     var selectedProduct by remember { mutableStateOf(activeProducts.firstOrNull()) }
     var productSearchQuery by remember { mutableStateOf("") }
+    var showProductBarcodeScanner by remember { mutableStateOf(false) }
     var quantityText by remember { mutableStateOf("1") }
     var selectedReason by remember { mutableStateOf(SpoilageReason.EXPIRED) }
     var notes by remember { mutableStateOf("") }
@@ -863,6 +958,7 @@ private fun ComprehensiveRecordDamagedDialog(
         else activeProducts.filter {
             it.name.contains(productSearchQuery, ignoreCase = true) ||
             it.barcode.contains(productSearchQuery, ignoreCase = true) ||
+            it.cartonBarcode.contains(productSearchQuery, ignoreCase = true) ||
             it.category.contains(productSearchQuery, ignoreCase = true)
         }
     }
@@ -902,37 +998,85 @@ private fun ComprehensiveRecordDamagedDialog(
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 // Section 1: Product Selection from Inventory
-                Text(
-                    text = "1. اختيار السلعة من المخزون:",
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = semantic.textPrimary
-                )
-
-                // Search field for inventory items
-                OutlinedTextField(
-                    value = productSearchQuery,
-                    onValueChange = { productSearchQuery = it },
-                    leadingIcon = {
-                        Icon(
-                            Icons.Default.Search,
-                            contentDescription = null,
-                            tint = semantic.textSecondary,
-                            modifier = Modifier.size(18.dp)
-                        )
-                    },
-                    trailingIcon = {
-                        if (productSearchQuery.isNotEmpty()) {
-                            IconButton(onClick = { productSearchQuery = "" }) {
-                                Icon(Icons.Default.Close, contentDescription = "مسح", modifier = Modifier.size(16.dp))
-                            }
-                        }
-                    },
-                    placeholder = { Text("ابحث باسم السلعة أو الباركود...", fontSize = 11.5.sp) },
-                    singleLine = true,
+                Row(
                     modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(10.dp)
-                )
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "1. اختيار السلعة من المخزون:",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = semantic.textPrimary
+                    )
+
+                    Surface(
+                        onClick = { showProductBarcodeScanner = true },
+                        shape = RoundedCornerShape(8.dp),
+                        color = MaterialTheme.colorScheme.primaryContainer,
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.45f))
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Icon(
+                                Icons.Default.QrCodeScanner,
+                                contentDescription = "مسح الباركود بالكاميرا",
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(15.dp)
+                            )
+                            Text(
+                                text = "مسح باركود 📷",
+                                fontSize = 10.5.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                            )
+                        }
+                    }
+                }
+
+                // Search field for inventory items with camera barcode button
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    OutlinedTextField(
+                        value = productSearchQuery,
+                        onValueChange = { productSearchQuery = it },
+                        leadingIcon = {
+                            Icon(
+                                Icons.Default.Search,
+                                contentDescription = null,
+                                tint = semantic.textSecondary,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        },
+                        trailingIcon = {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                if (productSearchQuery.isNotEmpty()) {
+                                    IconButton(onClick = { productSearchQuery = "" }) {
+                                        Icon(Icons.Default.Close, contentDescription = "مسح", modifier = Modifier.size(16.dp))
+                                    }
+                                }
+                                IconButton(onClick = { showProductBarcodeScanner = true }) {
+                                    Icon(
+                                        Icons.Default.QrCodeScanner,
+                                        contentDescription = "مسح الباركود بالكاميرا",
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
+                            }
+                        },
+                        placeholder = { Text("ابحث باسم السلعة أو امسح الباركود...", fontSize = 11.5.sp) },
+                        singleLine = true,
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(10.dp)
+                    )
+                }
 
                 // Scrollable box of products matching the search
                 Surface(
@@ -1348,6 +1492,40 @@ private fun ComprehensiveRecordDamagedDialog(
             }
         }
     )
+
+    if (showProductBarcodeScanner) {
+        SimpleBarcodeCaptureDialog(
+            title = "مسح باركود السلعة التالفة من المخزون 📷",
+            onBarcodeScanned = { scannedCode ->
+                val cleanCode = scannedCode.trim()
+                productSearchQuery = cleanCode
+                val exactOrPartialMatch = activeProducts.find {
+                    it.barcode.equals(cleanCode, ignoreCase = true) ||
+                        (it.cartonBarcode.isNotBlank() && it.cartonBarcode.equals(cleanCode, ignoreCase = true))
+                } ?: activeProducts.find {
+                    it.barcode.contains(cleanCode, ignoreCase = true) ||
+                        it.cartonBarcode.contains(cleanCode, ignoreCase = true)
+                }
+
+                if (exactOrPartialMatch != null) {
+                    selectedProduct = exactOrPartialMatch
+                    Toast.makeText(
+                        context,
+                        "تم تحديد السلعة: ${exactOrPartialMatch.name} ✅",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                } else {
+                    Toast.makeText(
+                        context,
+                        "لم يتم العثور على سلعة بالباركود: $cleanCode",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
+                showProductBarcodeScanner = false
+            },
+            onDismiss = { showProductBarcodeScanner = false }
+        )
+    }
 }
 
 @Composable

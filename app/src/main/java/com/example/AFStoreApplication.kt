@@ -13,7 +13,7 @@ import kotlinx.coroutines.Dispatchers
 
 class AFStoreApplication : Application(), ImageLoaderFactory {
     override fun attachBaseContext(base: android.content.Context) {
-        val locale = java.util.Locale("ar")
+        val locale = java.util.Locale.forLanguageTag("ar-DZ-u-nu-latn")
         java.util.Locale.setDefault(locale)
         super.attachBaseContext(base)
     }
@@ -21,7 +21,7 @@ class AFStoreApplication : Application(), ImageLoaderFactory {
     override fun onCreate() {
         super.onCreate()
         instance = this
-        val locale = java.util.Locale("ar")
+        val locale = java.util.Locale.forLanguageTag("ar-DZ-u-nu-latn")
         java.util.Locale.setDefault(locale)
         val config = resources.configuration
         config.setLocale(locale)

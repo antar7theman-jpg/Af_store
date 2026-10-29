@@ -558,6 +558,32 @@ class AntarRepository(private val dao: StoreDao) {
         dao.updateSalesStatusByInvoiceGroup(invoiceGroupId, remoteStatus, updatedAt, RecordSyncState.SYNCED)
     }
 
+    suspend fun updateRemoteInvoiceStatusAndNotesIfChanged(
+        invoiceGroupId: String,
+        remoteStatus: String,
+        remoteNotes: String,
+        updatedAt: Long = System.currentTimeMillis()
+    ) {
+        if (invoiceGroupId.isBlank() || remoteStatus.isBlank()) return
+        dao.updateSalesStatusAndNotesByInvoiceGroup(invoiceGroupId, remoteStatus, remoteNotes, updatedAt, RecordSyncState.SYNCED)
+    }
+
+    suspend fun updateInvoiceStatusAndNotes(
+        invoice: ArchivedInvoice,
+        newStatus: String,
+        newNotes: String,
+        syncStatus: String = RecordSyncState.PENDING
+    ) {
+        val now = System.currentTimeMillis()
+        val saleIds = invoice.items.mapNotNull { it.saleId.takeIf { id -> id > 0 } }
+        if (saleIds.isNotEmpty()) {
+            dao.updateSalesStatusAndNotesByIds(saleIds, newStatus, newNotes, now, syncStatus)
+        }
+        if (invoice.invoiceId.isNotBlank()) {
+            dao.updateSalesStatusAndNotesByInvoiceGroup(invoice.invoiceId, newStatus, newNotes, now, syncStatus)
+        }
+    }
+
     suspend fun mergeRemoteProductsWithTimestampResolution(remoteProducts: List<Product>): Int {
         if (remoteProducts.isEmpty()) return 0
         val allLocal = dao.getAllProductsOnce()

@@ -2421,7 +2421,7 @@ fun InvoicePreviewModal(
     onDismiss: () -> Unit
 ) {
     val dateFormatted = remember(invoice.dateMillis) {
-        SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(invoice.dateMillis))
+        SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US).format(Date(invoice.dateMillis))
     }
     AlertDialog(
         onDismissRequest = onDismiss,

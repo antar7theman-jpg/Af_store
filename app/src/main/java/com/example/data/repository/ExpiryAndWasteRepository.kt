@@ -14,7 +14,7 @@ import org.json.JSONObject
 import java.util.Calendar
 import java.util.UUID
 
-class ExpiryAndWasteRepository(context: Context) {
+class ExpiryAndWasteRepository(private val context: Context) {
 
     private val prefs: SharedPreferences = context.getSharedPreferences("antar_store_expiry_waste_prefs", Context.MODE_PRIVATE)
 
@@ -93,6 +93,7 @@ class ExpiryAndWasteRepository(context: Context) {
                             notes = obj.optString("notes", ""),
                             batchNumber = obj.optString("batchNumber", ""),
                             imagePath = obj.optString("imagePath", ""),
+                            imageUrl = obj.optString("imageUrl", ""),
                             deductedFromStock = obj.optBoolean("deductedFromStock", true),
                             updatedAt = obj.optLong("updatedAt", System.currentTimeMillis())
                         )
@@ -139,6 +140,35 @@ class ExpiryAndWasteRepository(context: Context) {
         val sorted = current.sortedByDescending { it.dateMillis }
         _damagedItems.value = sorted
         persistDamagedItems(sorted)
+    }
+
+    @Synchronized
+    fun mergeRemoteDamagedItems(remoteItems: List<DamagedItemRecord>): Int {
+        if (remoteItems.isEmpty()) return 0
+        val currentMap = _damagedItems.value.associateBy { it.id }.toMutableMap()
+        var mergedCount = 0
+        remoteItems.forEach { remote ->
+            val existing = currentMap[remote.id]
+            if (existing == null || remote.updatedAt >= existing.updatedAt) {
+                val resolvedLocalPath = if (remote.imageUrl.isNotBlank()) {
+                    com.example.utils.ProductCloudImageHelper.decodeBase64ToLocalFile(
+                        context = context,
+                        base64String = remote.imageUrl,
+                        identifier = "dmg_${remote.id}"
+                    ) ?: existing?.imagePath ?: remote.imagePath
+                } else {
+                    existing?.imagePath?.ifBlank { remote.imagePath } ?: remote.imagePath
+                }
+                currentMap[remote.id] = remote.copy(imagePath = resolvedLocalPath)
+                mergedCount++
+            }
+        }
+        if (mergedCount > 0) {
+            val sorted = currentMap.values.sortedByDescending { it.dateMillis }
+            _damagedItems.value = sorted
+            persistDamagedItems(sorted)
+        }
+        return mergedCount
     }
 
     @Synchronized
@@ -206,6 +236,7 @@ class ExpiryAndWasteRepository(context: Context) {
                 obj.put("notes", item.notes)
                 obj.put("batchNumber", item.batchNumber)
                 obj.put("imagePath", item.imagePath)
+                obj.put("imageUrl", item.imageUrl)
                 obj.put("deductedFromStock", item.deductedFromStock)
                 obj.put("updatedAt", item.updatedAt)
                 array.put(obj)

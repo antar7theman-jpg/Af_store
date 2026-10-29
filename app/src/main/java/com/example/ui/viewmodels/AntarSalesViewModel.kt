@@ -292,6 +292,59 @@ class AntarSalesViewModel(
     private val _currentUser = MutableStateFlow<User?>(null)
     val currentUser: StateFlow<User?> = _currentUser.asStateFlow()
 
+    val isCurrentUserWorker: StateFlow<Boolean> = combine(_activeStaffAccount, _currentUser) { staff, localUser ->
+        when {
+            staff != null -> !staff.isManagerOrAdmin && staff.role.equals("worker", ignoreCase = true)
+            localUser != null -> localUser.role == UserRole.WORKER
+            else -> false
+        }
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, false)
+
+    val pendingReturnRequests: StateFlow<List<ArchivedInvoice>> = combine(
+        archivedInvoices,
+        _activeStaffAccount,
+        _currentUser
+    ) { invoices, staff, localUser ->
+        invoices.filter { inv ->
+            if (!inv.isReturnRequested) return@filter false
+            if (staff != null) {
+                if (staff.isOwner) {
+                    true
+                } else if (staff.isManagerOrAdmin) {
+                    val reqMgrUid = inv.returnRequestManagerUid
+                    val reqMgrEmail = inv.returnRequestManagerEmail
+                    reqMgrUid.isBlank() ||
+                        reqMgrUid == staff.userId ||
+                        (reqMgrEmail.isNotBlank() && reqMgrEmail.equals(staff.email, ignoreCase = true))
+                } else {
+                    val reqWorkerUid = inv.returnRequestWorkerUid
+                    reqWorkerUid.isBlank() || reqWorkerUid == staff.userId
+                }
+            } else {
+                localUser != null
+            }
+        }
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    private val notifiedReturnRequestIds = mutableSetOf<String>()
+
+    val currentWorkerAffiliatedManagerName: StateFlow<String> = combine(
+        _activeStaffAccount,
+        _currentUser,
+        users
+    ) { staff, localUser, allUsers ->
+        val fromStaff = staff?.parentManagerName?.takeIf { it.isNotBlank() }
+            ?: staff?.approvedByName?.takeIf { it.isNotBlank() }
+            ?: staff?.parentManagerEmail?.takeIf { it.isNotBlank() }
+        if (!fromStaff.isNullOrBlank()) {
+            fromStaff
+        } else {
+            val managerUser = allUsers.find { it.id == localUser?.managerId }
+                ?: allUsers.find { it.role == UserRole.MANAGER || it.role == UserRole.SUPER_ADMIN }
+            managerUser?.fullName?.takeIf { it.isNotBlank() } ?: "المدير المسؤول"
+        }
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, "المدير المسؤول")
+
     private val _storeName = MutableStateFlow(prefs.getString("store_name", "AF store") ?: "AF store")
     val storeName: StateFlow<String> = _storeName.asStateFlow()
 
@@ -707,6 +760,35 @@ class AntarSalesViewModel(
             }
         }
 
+        // Monitor incoming worker invoice return requests for the affiliated manager
+        viewModelScope.launch {
+            combine(pendingReturnRequests, isCurrentUserWorker) { reqs, isWorker ->
+                reqs to isWorker
+            }.collect { (reqs, isWorker) ->
+                val activeIds = reqs.map { it.invoiceId }.toSet()
+                notifiedReturnRequestIds.retainAll(activeIds)
+                if (!isWorker && reqs.isNotEmpty()) {
+                    val newlyRequested = reqs.filter { !notifiedReturnRequestIds.contains(it.invoiceId) }
+                    newlyRequested.forEach { inv ->
+                        notifiedReturnRequestIds.add(inv.invoiceId)
+                        val subtotalStr = String.format(Locale.US, "%.2f", inv.subtotal)
+                        LowStockNotificationManager.postWorkerReturnRequestSystemNotification(
+                            context = application.applicationContext,
+                            invoiceId = inv.invoiceId,
+                            customerName = inv.customerName,
+                            workerName = inv.returnRequestWorkerName,
+                            subtotalFormatted = subtotalStr,
+                            currencySymbol = _currencySymbol.value,
+                            reason = inv.returnRequestReason
+                        )
+                        showStatusMessage(
+                            "🔔 طلب مرتجع جديد من العامل (${inv.returnRequestWorkerName}): الفاتورة ${inv.invoiceId} بقيمة $subtotalStr ${_currencySymbol.value} بانتظار موافقتك"
+                        )
+                    }
+                }
+            }
+        }
+
         // Background ticker while app is active to automatically trigger at 09:00 PM (or custom scheduled time)
         viewModelScope.launch {
             while (true) {
@@ -778,6 +860,7 @@ class AntarSalesViewModel(
             showStatusMessage(statusMsg)
         }
         liveInventorySyncManager.startLiveWorkerLocationsSync(account)
+        liveInventorySyncManager.startLiveDamagedGoodsSync(account, expiryAndWasteRepository)
         offlineSyncManager.triggerManualSync()
 
         // Observe Pro upgrade requests
@@ -2693,17 +2776,157 @@ class AntarSalesViewModel(
         }
     }
 
-    fun refundInvoice(invoice: ArchivedInvoice) {
+    fun requestInvoiceReturnByWorker(invoice: ArchivedInvoice, reason: String = "") {
         viewModelScope.launch {
-            invoice.items.forEach { sale ->
-                repository.deleteSaleAndRestoreStock(sale)
-            }
-            repository.logActivity(
-                user = _currentUser.value,
-                actionType = "INVOICE_REFUNDED",
-                description = "مرتجع كامل للفاتورة ${invoice.invoiceId} واستعادة المخزون"
+            val staff = activeStaffAccount
+            val localUser = _currentUser.value
+            val workerName = staff?.fullName?.takeIf { it.isNotBlank() }
+                ?: localUser?.fullName?.takeIf { it.isNotBlank() }
+                ?: staff?.email?.takeIf { it.isNotBlank() }
+                ?: "عامل المبيعات"
+            val workerUid = staff?.userId?.takeIf { it.isNotBlank() }
+                ?: localUser?.id?.toString().orEmpty()
+            val managerUid = staff?.parentManagerUid?.takeIf { it.isNotBlank() }
+                ?: staff?.approvedByUid.orEmpty()
+            val managerEmail = staff?.parentManagerEmail.orEmpty()
+            val managerName = currentWorkerAffiliatedManagerName.value
+
+            val updatedNotes = ArchivedInvoice.buildNotesWithReturnRequest(
+                existingNotes = invoice.notes,
+                workerName = workerName,
+                workerUid = workerUid,
+                managerUid = managerUid,
+                managerEmail = managerEmail,
+                managerName = managerName,
+                reason = reason
             )
-            showStatusMessage("تم استرجاع الفاتورة ${invoice.invoiceId} وإعادة الكميات للمخزون")
+            val updatedInvoice = invoice.copy(
+                status = "return_requested",
+                notes = updatedNotes,
+                items = invoice.items.map { it.copy(status = "return_requested", notes = updatedNotes) }
+            )
+            withContext(Dispatchers.IO) {
+                repository.updateInvoiceStatusAndNotes(
+                    invoice = invoice,
+                    newStatus = "return_requested",
+                    newNotes = updatedNotes
+                )
+                repository.logActivity(
+                    user = localUser,
+                    actionType = "INVOICE_RETURN_REQUESTED",
+                    description = "طلب العامل ($workerName) إرجاع الفاتورة ${invoice.invoiceId} وبانتظار موافقة المدير ($managerName)"
+                )
+                liveInventorySyncManager.pushInvoiceToCloud(updatedInvoice, staff)
+            }
+            showStatusMessage("تم إرسال طلب إرجاع الفاتورة ${invoice.invoiceId} إلى المدير ($managerName) وبانتظار موافقته 🔔")
+        }
+    }
+
+    fun approveWorkerInvoiceReturn(invoice: ArchivedInvoice) {
+        executeFullInvoiceRefund(invoice, approvedFromWorkerRequest = true)
+    }
+
+    fun rejectWorkerInvoiceReturn(invoice: ArchivedInvoice) {
+        viewModelScope.launch {
+            val staff = activeStaffAccount
+            val localUser = _currentUser.value
+            val cleanNotes = invoice.cleanNotesWithoutReturnTag
+            val restoredInvoice = invoice.copy(
+                status = "completed",
+                notes = cleanNotes,
+                items = invoice.items.map { it.copy(status = "completed", notes = cleanNotes) }
+            )
+            withContext(Dispatchers.IO) {
+                repository.updateInvoiceStatusAndNotes(
+                    invoice = invoice,
+                    newStatus = "completed",
+                    newNotes = cleanNotes
+                )
+                repository.logActivity(
+                    user = localUser,
+                    actionType = "INVOICE_RETURN_REJECTED",
+                    description = "رفض المدير طلب إرجاع الفاتورة ${invoice.invoiceId} المقدم من العامل (${invoice.returnRequestWorkerName})"
+                )
+                liveInventorySyncManager.pushInvoiceToCloud(restoredInvoice, staff)
+            }
+            showStatusMessage("تم رفض طلب إرجاع الفاتورة ${invoice.invoiceId} وإبقاء الفاتورة فعالة ✓")
+        }
+    }
+
+    fun refundInvoice(invoice: ArchivedInvoice) {
+        if (isCurrentUserWorker.value) {
+            requestInvoiceReturnByWorker(invoice)
+            return
+        }
+        executeFullInvoiceRefund(invoice, approvedFromWorkerRequest = invoice.isReturnRequested)
+    }
+
+    private fun executeFullInvoiceRefund(invoice: ArchivedInvoice, approvedFromWorkerRequest: Boolean) {
+        viewModelScope.launch {
+            val staff = activeStaffAccount
+            val localUser = _currentUser.value
+            val workerName = invoice.returnRequestWorkerName
+            withContext(Dispatchers.IO) {
+                val currentProductsMap = repository.getAllProductsOnce().associateBy { it.id }.toMutableMap()
+                val increases = mutableListOf<LiveInventorySyncManager.StockIncrease>()
+
+                invoice.items.forEach { sale ->
+                    val existingProd = currentProductsMap[sale.productId]
+                    if (existingProd != null) {
+                        val newStock = existingProd.stock + sale.quantitySold
+                        currentProductsMap[sale.productId] = existingProd.copy(stock = newStock)
+                        increases.add(
+                            LiveInventorySyncManager.StockIncrease(
+                                productId = existingProd.id,
+                                barcode = existingProd.barcode,
+                                firestoreId = existingProd.firestoreId,
+                                unitsAdded = sale.quantitySold,
+                                resultingStock = newStock
+                            )
+                        )
+                    }
+                    repository.deleteSaleAndRestoreStock(sale)
+                }
+
+                // If invoice was on debt, deduct from customer's balanceDebt
+                if (invoice.isDebt && invoice.customerId != null) {
+                    val cust = repository.getAllCustomersOnce().find { it.id == invoice.customerId }
+                    if (cust != null && cust.balanceDebt > 0) {
+                        repository.recordCustomerPayment(
+                            customer = cust,
+                            amount = invoice.subtotal.coerceAtMost(cust.balanceDebt),
+                            notes = "خصم مديونية بسبب إرجاع الفاتورة ${invoice.invoiceId}"
+                        )
+                    }
+                }
+
+                repository.logActivity(
+                    user = localUser,
+                    actionType = if (approvedFromWorkerRequest) "INVOICE_RETURN_APPROVED" else "INVOICE_REFUNDED",
+                    description = if (approvedFromWorkerRequest) {
+                        "وافق المدير على طلب العامل ($workerName) بإرجاع الفاتورة ${invoice.invoiceId} واستعادة المخزون"
+                    } else {
+                        "مرتجع كامل للفاتورة ${invoice.invoiceId} واستعادة المخزون"
+                    }
+                )
+
+                if (increases.isNotEmpty()) {
+                    liveInventorySyncManager.pushBatchStockIncreases(increases, staff)
+                }
+                liveInventorySyncManager.pushInvoiceToCloud(
+                    invoice.copy(
+                        status = "refunded",
+                        items = invoice.items.map { it.copy(status = "refunded") }
+                    ),
+                    staff
+                )
+            }
+            val msg = if (approvedFromWorkerRequest) {
+                "تمت الموافقة على طلب العامل ($workerName) وإرجاع الفاتورة ${invoice.invoiceId} واستعادة المخزون ✓"
+            } else {
+                "تم استرجاع الفاتورة ${invoice.invoiceId} وإعادة الكميات للمخزون ✓"
+            }
+            showStatusMessage(msg)
         }
     }
 
@@ -4393,9 +4616,9 @@ class AntarSalesViewModel(
         )
         expiryAndWasteRepository.saveDamagedItem(damagedRecord)
 
-        if (deductFromStock) {
-            val updatedStock = (product.stock - safeQty).coerceAtLeast(0)
-            viewModelScope.launch {
+        viewModelScope.launch {
+            if (deductFromStock) {
+                val updatedStock = (product.stock - safeQty).coerceAtLeast(0)
                 repository.saveProduct(product.copy(stock = updatedStock))
                 repository.logActivity(
                     user = _currentUser.value,
@@ -4403,15 +4626,62 @@ class AntarSalesViewModel(
                     description = "تسجيل تلف/هالك: ${product.name} (عدد $safeQty وحدة) بسبب ${reason.labelAr} - خسارة ${loss} د.ج",
                     metadata = "productId=${product.id};qty=$safeQty;reason=${reason.id};loss=$loss;newStock=$updatedStock"
                 )
+                launch(kotlinx.coroutines.Dispatchers.IO) {
+                    liveInventorySyncManager.pushBatchStockDeductions(
+                        listOf(
+                            LiveInventorySyncManager.StockDeduction(
+                                productId = product.id,
+                                barcode = product.barcode,
+                                firestoreId = product.firestoreId,
+                                unitsDeducted = safeQty,
+                                resultingStock = updatedStock
+                            )
+                        ),
+                        activeStaffAccount
+                    )
+                }
+            }
+
+            launch(kotlinx.coroutines.Dispatchers.IO) {
+                val pushRes = liveInventorySyncManager.pushDamagedItemToCloud(damagedRecord, activeStaffAccount)
+                pushRes.getOrNull()?.let { cloudImageUrl ->
+                    if (cloudImageUrl.isNotBlank()) {
+                        expiryAndWasteRepository.saveDamagedItem(damagedRecord.copy(imageUrl = cloudImageUrl))
+                    }
+                }
             }
         }
 
-        showStatusMessage("تم تسجيل البضاعة التالفة بنجاح (${reason.labelAr}) 🗑️")
+        showStatusMessage("تم تسجيل البضاعة التالفة ومزامنتها وصورتها سحابياً بنجاح (${reason.labelAr}) ☁️🗑️")
     }
 
     fun deleteDamagedItem(id: String) {
         expiryAndWasteRepository.deleteDamagedItem(id)
-        showStatusMessage("تم حذف سجل التلف بنجاح")
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            liveInventorySyncManager.deleteDamagedItemFromCloud(id, activeStaffAccount)
+        }
+        showStatusMessage("تم حذف سجل التلف محلياً وسحابياً بنجاح")
+    }
+
+    fun syncAllDamagedGoodsToCloud() {
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            val items = damagedItems.value
+            var syncedCount = 0
+            for (item in items) {
+                val res = liveInventorySyncManager.pushDamagedItemToCloud(item, activeStaffAccount)
+                if (res.isSuccess) {
+                    syncedCount++
+                    val cloudUrl = res.getOrNull().orEmpty()
+                    if (cloudUrl.isNotBlank() && item.imageUrl != cloudUrl) {
+                        expiryAndWasteRepository.saveDamagedItem(item.copy(imageUrl = cloudUrl))
+                    }
+                }
+            }
+            activeStaffAccount?.let { account ->
+                liveInventorySyncManager.startLiveDamagedGoodsSync(account, expiryAndWasteRepository)
+            }
+            showStatusMessage("تمت مزامنة $syncedCount سجل تالف مع الصور سحابياً بنجاح ☁️✅")
+        }
     }
 
     fun getDamagedLossThisMonth(): Double {
@@ -4420,6 +4690,121 @@ class AntarSalesViewModel(
 
     fun getDamagedLossToday(): Double {
         return expiryAndWasteRepository.getTotalLossToday()
+    }
+
+    // --- Smart Daily End-of-Day Z-Report State & Helpers ---
+    private val _zReportOwnerWhatsApp = MutableStateFlow(
+        prefs.getString("z_report_owner_whatsapp", "") ?: ""
+    )
+    val zReportOwnerWhatsApp: StateFlow<String> = _zReportOwnerWhatsApp.asStateFlow()
+
+    private val _zReportStateVersion = MutableStateFlow(0L)
+    val zReportStateVersion: StateFlow<Long> = _zReportStateVersion.asStateFlow()
+
+    fun getEffectiveOwnerWhatsAppPhone(): String {
+        val custom = _zReportOwnerWhatsApp.value.trim()
+        if (custom.isNotBlank()) return custom
+        val firstStorePhone = _storePhonesList.value.firstOrNull { it.isNotBlank() }?.trim().orEmpty()
+        if (firstStorePhone.isNotBlank()) return firstStorePhone
+        val legacyStorePhone = _storePhone.value.substringBefore("/").substringBefore("-").trim()
+        if (legacyStorePhone.isNotBlank()) return legacyStorePhone
+        return _developerContact.value.trim()
+    }
+
+    fun updateZReportOwnerWhatsApp(phone: String) {
+        val clean = phone.trim()
+        _zReportOwnerWhatsApp.value = clean
+        prefs.edit().putString("z_report_owner_whatsapp", clean).apply()
+        _zReportStateVersion.value = System.currentTimeMillis()
+        showStatusMessage("تم حفظ رقم واتساب المالك لإرسال تقارير الإغلاق اليومي (Z-Report) ✅")
+    }
+
+    fun getOpeningCashForDay(dayKey: String): Double {
+        val raw = prefs.getString("z_report_opening_cash_$dayKey", null)
+            ?: prefs.getString("z_report_default_opening_cash", "0.0")
+            ?: "0.0"
+        return raw.toDoubleOrNull() ?: 0.0
+    }
+
+    fun setOpeningCashForDay(dayKey: String, amount: Double, setAsDefault: Boolean = true) {
+        val safeAmount = amount.coerceAtLeast(0.0)
+        val formatted = String.format(Locale.US, "%.2f", safeAmount)
+        val editor = prefs.edit().putString("z_report_opening_cash_$dayKey", formatted)
+        if (setAsDefault) {
+            editor.putString("z_report_default_opening_cash", formatted)
+        }
+        editor.apply()
+        _zReportStateVersion.value = System.currentTimeMillis()
+    }
+
+    fun getActualCountedCashForDay(dayKey: String): Double? {
+        val raw = prefs.getString("z_report_counted_cash_$dayKey", null) ?: return null
+        return raw.toDoubleOrNull()
+    }
+
+    fun setActualCountedCashForDay(dayKey: String, amount: Double?) {
+        val editor = prefs.edit()
+        if (amount == null) {
+            editor.remove("z_report_counted_cash_$dayKey")
+        } else {
+            editor.putString("z_report_counted_cash_$dayKey", String.format(Locale.US, "%.2f", amount.coerceAtLeast(0.0)))
+        }
+        editor.apply()
+        _zReportStateVersion.value = System.currentTimeMillis()
+    }
+
+    fun getZReportNotesForDay(dayKey: String): String {
+        return prefs.getString("z_report_notes_$dayKey", "") ?: ""
+    }
+
+    fun setZReportNotesForDay(dayKey: String, notes: String) {
+        prefs.edit().putString("z_report_notes_$dayKey", notes.trim()).apply()
+        _zReportStateVersion.value = System.currentTimeMillis()
+    }
+
+    fun isDayZReportClosed(dayKey: String): Boolean {
+        return prefs.getBoolean("z_report_closed_$dayKey", false)
+    }
+
+    fun getDayZReportClosedTime(dayKey: String): String {
+        return prefs.getString("z_report_closed_time_$dayKey", "") ?: ""
+    }
+
+    fun closeDayZReportShift(
+        dayKey: String,
+        expectedCashInDrawer: Double,
+        totalSales: Double,
+        collectedDebts: Double,
+        totalExpenses: Double
+    ) {
+        val timeStr = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US).format(Date())
+        prefs.edit()
+            .putBoolean("z_report_closed_$dayKey", true)
+            .putString("z_report_closed_time_$dayKey", timeStr)
+            .apply()
+        _zReportStateVersion.value = System.currentTimeMillis()
+
+        val staffName = activeStaffAccount?.fullName?.takeIf { it.isNotBlank() }
+            ?: _currentUser.value?.fullName?.takeIf { it.isNotBlank() }
+            ?: "إدارة المتجر"
+        val sym = _currencySymbol.value
+        viewModelScope.launch {
+            repository.logActivity(
+                user = _currentUser.value,
+                actionType = "Z_REPORT_CLOSED",
+                description = "إغلاق الصندوق اليومي (Z-Report) ليوم $dayKey بواسطة $staffName — النقد في الدرج: ${String.format(Locale.US, "%.2f", expectedCashInDrawer)} $sym | المبيعات: ${String.format(Locale.US, "%.2f", totalSales)} $sym | الديون المحصلة: ${String.format(Locale.US, "%.2f", collectedDebts)} $sym | المصروفات: ${String.format(Locale.US, "%.2f", totalExpenses)} $sym",
+                metadata = "dayKey=$dayKey;cashInDrawer=$expectedCashInDrawer;sales=$totalSales;collectedDebts=$collectedDebts;expenses=$totalExpenses"
+            )
+        }
+        showStatusMessage("تم اعتماد وإغلاق تقرير الصندوق اليومي (Z-Report) ليوم $dayKey بنجاح 📊✅")
+    }
+
+    fun reopenDayZReportShift(dayKey: String) {
+        prefs.edit()
+            .putBoolean("z_report_closed_$dayKey", false)
+            .apply()
+        _zReportStateVersion.value = System.currentTimeMillis()
+        showStatusMessage("تم إعادة فتح وردية الصندوق ليوم $dayKey للتعديل")
     }
 }
 

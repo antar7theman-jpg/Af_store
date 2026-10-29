@@ -457,6 +457,14 @@ service cloud.firestore {
       allow delete: if isSignedIn() && isValidId(userId) && (request.auth.uid == userId || isAdmin());
     }
 
+    match /users/{userId}/damaged_goods/{recordId} {
+      allow get, list: if isSignedIn() && isValidId(userId);
+      allow create, update: if isSignedIn() &&
+                               isValidId(userId) &&
+                               isValidId(recordId);
+      allow delete: if isSignedIn() && isValidId(userId) && (request.auth.uid == userId || isAdmin());
+    }
+
     match /users/{userId}/cloud_backups/{backupId} {
       allow get, list: if isSignedIn() && request.auth.uid == userId;
       allow create, update: if isSignedIn() &&

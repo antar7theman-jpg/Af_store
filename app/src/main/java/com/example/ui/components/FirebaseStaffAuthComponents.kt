@@ -5296,7 +5296,7 @@ private fun StaffAccountApprovalItemCard(
     val displayDate = remember(staff.updatedAt, staff.createdAt) {
         val ts: Timestamp? = staff.updatedAt ?: staff.createdAt
         if (ts != null) {
-            SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(ts.toDate())
+            SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US).format(ts.toDate())
         } else {
             "الآن"
         }

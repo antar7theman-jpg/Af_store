@@ -8,8 +8,11 @@ import com.example.data.models.Product
 import com.example.data.models.PurchaseInvoice
 import com.example.data.models.RecordSyncState
 import com.example.data.models.ArchivedInvoice
+import com.example.data.models.DamagedItemRecord
+import com.example.data.models.SpoilageReason
 import com.example.data.models.Sale
 import com.example.data.models.WorkerLocation
+import com.example.data.repository.ExpiryAndWasteRepository
 import com.example.utils.ProductCloudImageHelper
 import com.google.firebase.Firebase
 import com.google.firebase.auth.auth
@@ -57,6 +60,12 @@ class LiveInventorySyncManager(
                 else -> "p_${System.currentTimeMillis()}"
             }
         }
+
+        fun getInvoiceDocId(invoiceId: String): String {
+            return invoiceId.trim()
+                .replace(Regex("[^a-zA-Z0-9_-]"), "_")
+                .ifBlank { "inv_${System.currentTimeMillis()}" }
+        }
     }
 
     init {
@@ -74,6 +83,7 @@ class LiveInventorySyncManager(
     private var invoicesListenerRegistration: ListenerRegistration? = null
     private var purchaseInvoicesListenerRegistration: ListenerRegistration? = null
     private var locationsListenerRegistration: ListenerRegistration? = null
+    private var damagedGoodsListenerRegistration: ListenerRegistration? = null
     private var currentOwnerUid: String = ""
 
     private val _isLiveSyncActive = MutableStateFlow(false)
@@ -133,8 +143,15 @@ class LiveInventorySyncManager(
             activeAccount.role.equals("worker", ignoreCase = true) && activeAccount.parentManagerUid.isNotBlank() -> {
                 activeAccount.parentManagerUid
             }
+            activeAccount.role.equals("worker", ignoreCase = true) && activeAccount.approvedByUid.isNotBlank() -> {
+                activeAccount.approvedByUid
+            }
             activeAccount.isOwner -> activeAccount.userId.ifBlank { auth.currentUser?.uid ?: "owner_deffas_antar" }
-            else -> activeAccount.parentManagerUid.ifBlank { activeAccount.userId.ifBlank { auth.currentUser?.uid ?: "" } }
+            else -> activeAccount.parentManagerUid.ifBlank {
+                activeAccount.approvedByUid.ifBlank {
+                    activeAccount.userId.ifBlank { auth.currentUser?.uid ?: "" }
+                }
+            }
         }
     }
 
@@ -552,7 +569,8 @@ class LiveInventorySyncManager(
                 "updatedAt" to System.currentTimeMillis()
             )
 
-            invoicesCollection.document(invoiceDocId).set(invoiceData, SetOptions.merge()).await()
+            val safeDocId = getInvoiceDocId(invoiceDocId)
+            invoicesCollection.document(safeDocId).set(invoiceData, SetOptions.merge()).await()
             val saleIds = invoice.items.mapNotNull { it.saleId.takeIf { id -> id > 0 } }.ifEmpty {
                 repository.getAllSalesOnce().filter { it.invoiceGroupId == invoiceDocId }.map { it.saleId }
             }
@@ -808,15 +826,26 @@ class LiveInventorySyncManager(
                 }
             }
 
-            if (salesToMerge.isNotEmpty()) {
+            val docNotes = doc.getString("notes") ?: ""
+            if (docStatus == "refunded") {
+                val existingForInvoice = existingByInvoiceId[invoiceId]
+                if (!existingForInvoice.isNullOrEmpty()) {
+                    repository.deletePreSaleOrder(invoiceId)
+                }
+            } else if (salesToMerge.isNotEmpty()) {
                 val existingForInvoice = existingByInvoiceId[invoiceId]
                 if (existingForInvoice.isNullOrEmpty()) {
                     repository.saveSalesBatch(salesToMerge, enqueueForSync = false)
                     newInvoicesCount++
                 } else {
                     val localStatus = existingForInvoice.first().status
-                    if (localStatus != docStatus && docStatus.isNotBlank()) {
-                        repository.updateRemoteInvoiceStatusIfChanged(invoiceId, docStatus)
+                    val localNotes = existingForInvoice.first().notes
+                    if ((localStatus != docStatus && docStatus.isNotBlank()) || (docNotes.isNotBlank() && localNotes != docNotes)) {
+                        repository.updateRemoteInvoiceStatusAndNotesIfChanged(
+                            invoiceGroupId = invoiceId,
+                            remoteStatus = docStatus.ifBlank { localStatus },
+                            remoteNotes = docNotes.ifBlank { localNotes }
+                        )
                     }
                 }
             }
@@ -1051,7 +1080,7 @@ class LiveInventorySyncManager(
                             )
                         }
                     )
-                    batch.set(invoicesCollection.document(invId), invoicePayload, SetOptions.merge())
+                    batch.set(invoicesCollection.document(getInvoiceDocId(invId)), invoicePayload, SetOptions.merge())
                 }
                 batch.commit().await()
                 repository.markSalesAsSynced(pendingSales.map { it.saleId })
@@ -1277,7 +1306,7 @@ class LiveInventorySyncManager(
                             )
                         }
                     )
-                    batch.set(invoicesCollection.document(invId), invoicePayload, SetOptions.merge())
+                    batch.set(invoicesCollection.document(getInvoiceDocId(invId)), invoicePayload, SetOptions.merge())
                 }
                 batch.commit().await()
                 repository.markSalesAsSynced(pendingSales.map { it.saleId })
@@ -1431,6 +1460,163 @@ class LiveInventorySyncManager(
     }
 
     /**
+     * رفع سجل بضاعة تالفة مع ضغط صورتها إلى Base64 لمزامنتها سحابياً بين المدير والعمال فورياً.
+     */
+    suspend fun pushDamagedItemToCloud(
+        item: DamagedItemRecord,
+        activeAccount: StaffAccount? = null
+    ): Result<String> = withContext(Dispatchers.IO) {
+        if (activeAccount != null && !activeAccount.isSyncEnabled && !activeAccount.isOwner) {
+            return@withContext Result.success(item.id)
+        }
+        val targetOwnerUid = resolveInventoryOwnerUid(activeAccount)
+        if (targetOwnerUid.isBlank()) {
+            return@withContext Result.failure(IllegalStateException("لم يتم العثور على معرّف سحابي لمخزون المدير"))
+        }
+
+        try {
+            val safeDocId = item.id.replace(Regex("[^a-zA-Z0-9_\\-]"), "_").ifBlank { "dmg_${System.currentTimeMillis()}" }
+            val docRef = db.collection("users").document(targetOwnerUid).collection("damaged_goods").document(safeDocId)
+
+            val base64Image = if (item.imagePath.isNotBlank()) {
+                ProductCloudImageHelper.compressLocalImageToBase64(context, item.imagePath) ?: item.imageUrl
+            } else {
+                item.imageUrl
+            }
+
+            val payload = hashMapOf<String, Any?>(
+                "id" to safeDocId,
+                "productId" to item.productId,
+                "productName" to item.productName,
+                "productBarcode" to item.productBarcode,
+                "quantity" to item.quantity,
+                "unitCost" to item.unitCost,
+                "totalLoss" to item.totalLoss,
+                "reason" to item.reason.id,
+                "dateMillis" to item.dateMillis,
+                "recordedBy" to item.recordedBy,
+                "notes" to item.notes,
+                "batchNumber" to item.batchNumber,
+                "imagePath" to item.imagePath,
+                "imageUrl" to (base64Image ?: ""),
+                "deductedFromStock" to item.deductedFromStock,
+                "updatedAt" to System.currentTimeMillis(),
+                "serverUpdatedAt" to FieldValue.serverTimestamp()
+            )
+
+            docRef.set(payload, SetOptions.merge()).await()
+            _lastSyncTimestamp.value = System.currentTimeMillis()
+            Log.i(TAG, "تم رفع سجل التالف «${item.productName}» وصورته للسحابة بنجاح.")
+            Result.success(base64Image ?: "")
+        } catch (e: Exception) {
+            Log.e(TAG, "فشل رفع سجل التالف إلى Firestore: ${e.message}", e)
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * حذف سجل بضاعة تالفة من السحابة.
+     */
+    suspend fun deleteDamagedItemFromCloud(
+        itemId: String,
+        activeAccount: StaffAccount? = null
+    ): Result<Unit> = withContext(Dispatchers.IO) {
+        if (activeAccount != null && !activeAccount.isSyncEnabled && !activeAccount.isOwner) {
+            return@withContext Result.success(Unit)
+        }
+        val targetOwnerUid = resolveInventoryOwnerUid(activeAccount)
+        if (targetOwnerUid.isBlank()) return@withContext Result.success(Unit)
+
+        try {
+            val safeDocId = itemId.replace(Regex("[^a-zA-Z0-9_\\-]"), "_")
+            db.collection("users").document(targetOwnerUid).collection("damaged_goods").document(safeDocId).delete().await()
+            _lastSyncTimestamp.value = System.currentTimeMillis()
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Log.w(TAG, "تعذر حذف سجل التالف من السحابة: ${e.message}")
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * بدء مستمع المزامنة الحية لسجلات البضائع التالفة وصورها بين جميع الأجهزة.
+     */
+    fun startLiveDamagedGoodsSync(
+        activeAccount: StaffAccount,
+        expiryAndWasteRepository: ExpiryAndWasteRepository,
+        onStatusMessage: (String) -> Unit = {}
+    ) {
+        if (!activeAccount.isSyncEnabled && !activeAccount.isOwner) return
+        val targetOwnerUid = resolveInventoryOwnerUid(activeAccount)
+        if (targetOwnerUid.isBlank()) return
+
+        stopLiveDamagedGoodsSync()
+
+        val collectionRef = db.collection("users").document(targetOwnerUid).collection("damaged_goods")
+        damagedGoodsListenerRegistration = collectionRef.addSnapshotListener { snapshot, error ->
+            if (error != null || snapshot == null) return@addSnapshotListener
+
+            scope.launch(Dispatchers.IO) {
+                try {
+                    val remoteItems = mutableListOf<DamagedItemRecord>()
+                    for (doc in snapshot.documents) {
+                        val id = doc.getString("id") ?: doc.id
+                        val productId = (doc.get("productId") as? Number)?.toInt() ?: 0
+                        val productName = doc.getString("productName") ?: continue
+                        val productBarcode = doc.getString("productBarcode") ?: ""
+                        val quantity = (doc.get("quantity") as? Number)?.toInt() ?: 1
+                        val unitCost = (doc.get("unitCost") as? Number)?.toDouble() ?: 0.0
+                        val totalLoss = (doc.get("totalLoss") as? Number)?.toDouble() ?: (quantity * unitCost)
+                        val reason = SpoilageReason.fromId(doc.getString("reason") ?: "OTHER")
+                        val dateMillis = (doc.get("dateMillis") as? Number)?.toLong() ?: System.currentTimeMillis()
+                        val recordedBy = doc.getString("recordedBy") ?: ""
+                        val notes = doc.getString("notes") ?: ""
+                        val batchNumber = doc.getString("batchNumber") ?: ""
+                        val imagePath = doc.getString("imagePath") ?: ""
+                        val imageUrl = doc.getString("imageUrl") ?: ""
+                        val deductedFromStock = doc.getBoolean("deductedFromStock") ?: true
+                        val updatedAt = (doc.get("updatedAt") as? Number)?.toLong() ?: dateMillis
+
+                        remoteItems.add(
+                            DamagedItemRecord(
+                                id = id,
+                                productId = productId,
+                                productName = productName,
+                                productBarcode = productBarcode,
+                                quantity = quantity,
+                                unitCost = unitCost,
+                                totalLoss = totalLoss,
+                                reason = reason,
+                                dateMillis = dateMillis,
+                                recordedBy = recordedBy,
+                                notes = notes,
+                                batchNumber = batchNumber,
+                                imagePath = imagePath,
+                                imageUrl = imageUrl,
+                                deductedFromStock = deductedFromStock,
+                                updatedAt = updatedAt
+                            )
+                        )
+                    }
+                    if (remoteItems.isNotEmpty()) {
+                        val merged = expiryAndWasteRepository.mergeRemoteDamagedItems(remoteItems)
+                        if (merged > 0) {
+                            _lastSyncTimestamp.value = System.currentTimeMillis()
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "خطأ أثناء دمج سجلات التوالف السحابية: ${e.message}")
+                }
+            }
+        }
+    }
+
+    fun stopLiveDamagedGoodsSync() {
+        damagedGoodsListenerRegistration?.remove()
+        damagedGoodsListenerRegistration = null
+    }
+
+    /**
      * إيقاف جميع مستمعي المزامنة الحية دفعة واحدة.
      */
     fun stopAllLiveSync() {
@@ -1438,6 +1624,7 @@ class LiveInventorySyncManager(
         stopLiveInvoicesSync()
         stopLivePurchaseInvoicesSync()
         stopLiveWorkerLocationsSync()
+        stopLiveDamagedGoodsSync()
     }
 
     data class ComprehensiveSyncResult(

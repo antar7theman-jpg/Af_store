@@ -148,7 +148,10 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 @Composable
-fun ReportsScreen(viewModel: AntarSalesViewModel) {
+fun ReportsScreen(
+    viewModel: AntarSalesViewModel,
+    onOpenZReport: (() -> Unit)? = null
+) {
     val canViewReports by viewModel.canViewReports.collectAsState()
     if (!canViewReports) {
         Box(
@@ -415,6 +418,14 @@ fun ReportsScreen(viewModel: AntarSalesViewModel) {
                     }
                 }
             }
+        }
+
+        // 5. Smart Daily End-of-Day Z-Report Summary & 1-Tap WhatsApp to Owner
+        item {
+            DailyZReportQuickSummaryCard(
+                viewModel = viewModel,
+                onOpenFullZReportScreen = onOpenZReport
+            )
         }
 
         // PDF Export, Print & Share Action Card

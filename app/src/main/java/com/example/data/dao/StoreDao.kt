@@ -443,6 +443,24 @@ interface StoreDao {
         syncStatus: String = RecordSyncState.PENDING
     )
 
+    @Query("UPDATE sales SET status = :newStatus, notes = :newNotes, updatedAt = :updatedAt, syncStatus = :syncStatus WHERE invoiceGroupId = :invoiceGroupId")
+    suspend fun updateSalesStatusAndNotesByInvoiceGroup(
+        invoiceGroupId: String,
+        newStatus: String,
+        newNotes: String,
+        updatedAt: Long = System.currentTimeMillis(),
+        syncStatus: String = RecordSyncState.PENDING
+    )
+
+    @Query("UPDATE sales SET status = :newStatus, notes = :newNotes, updatedAt = :updatedAt, syncStatus = :syncStatus WHERE saleId IN (:saleIds)")
+    suspend fun updateSalesStatusAndNotesByIds(
+        saleIds: List<Int>,
+        newStatus: String,
+        newNotes: String,
+        updatedAt: Long = System.currentTimeMillis(),
+        syncStatus: String = RecordSyncState.PENDING
+    )
+
     @Query("DELETE FROM sales WHERE invoiceGroupId = :invoiceGroupId")
     suspend fun deleteSalesByInvoiceGroup(invoiceGroupId: String)
 
