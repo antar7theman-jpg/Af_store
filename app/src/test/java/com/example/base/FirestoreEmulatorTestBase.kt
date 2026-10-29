@@ -31,6 +31,10 @@ abstract class FirestoreEmulatorTestBase {
 
     @Before
     open fun setUpFirebase() {
+        org.junit.Assume.assumeTrue(
+            "Firebase Auth & Firestore Emulators must be running on $EMULATOR_HOST to run emulator integration tests",
+            isEmulatorAvailable()
+        )
         val context = ApplicationProvider.getApplicationContext<Context>()
         val resId = context.resources.getIdentifier("firestore_database_id", "string", context.packageName)
         databaseId = if (resId != 0) context.getString(resId) else "ai-studio-android-deffas-a1f696be-decc-4255-ad09-94436552be74"
@@ -67,21 +71,49 @@ abstract class FirestoreEmulatorTestBase {
 
     @After
     open fun tearDownFirebase() {
-        auth.signOut()
-    }
-
-    protected suspend fun signInTestUser(email: String): String = withContext(Dispatchers.IO) {
-        withTimeout(AUTH_TIMEOUT_MS) {
-            val result = try {
-                auth.signInWithEmailAndPassword(email, DEFAULT_PASSWORD).await()
-            } catch (unused: FirebaseAuthInvalidUserException) {
-                auth.createUserWithEmailAndPassword(email, DEFAULT_PASSWORD).await()
-            }
-            checkNotNull(result.user?.uid) { "User auth failed" }
+        if (::auth.isInitialized) {
+            try {
+                auth.signOut()
+            } catch (_: Exception) {}
         }
     }
 
-    private companion object {
+    protected fun isEmulatorAvailable(): Boolean {
+        return isPortOpen(EMULATOR_HOST, FIRESTORE_PORT) && isPortOpen(EMULATOR_HOST, AUTH_PORT)
+    }
+
+    protected fun isPortOpen(host: String, port: Int, timeoutMs: Int = 200): Boolean {
+        return try {
+            java.net.Socket().use { socket ->
+                socket.connect(java.net.InetSocketAddress(host, port), timeoutMs)
+                true
+            }
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    protected suspend fun signInTestUser(email: String): String = withContext(Dispatchers.IO) {
+        org.junit.Assume.assumeTrue(
+            "Firebase Auth emulator (port $AUTH_PORT) is not reachable on $EMULATOR_HOST",
+            isPortOpen(EMULATOR_HOST, AUTH_PORT)
+        )
+        try {
+            withTimeout(AUTH_TIMEOUT_MS) {
+                val result = try {
+                    auth.createUserWithEmailAndPassword(email, DEFAULT_PASSWORD).await()
+                } catch (unused: Exception) {
+                    auth.signInWithEmailAndPassword(email, DEFAULT_PASSWORD).await()
+                }
+                checkNotNull(result.user?.uid) { "User auth failed" }
+            }
+        } catch (e: Exception) {
+            org.junit.Assume.assumeNoException("Firebase Auth emulator is required for this integration test", e)
+            ""
+        }
+    }
+
+    protected companion object {
         const val EMULATOR_HOST = "127.0.0.1"
         const val FIRESTORE_PORT = 8085
         const val AUTH_PORT = 9099

@@ -218,6 +218,7 @@ class StaffAccountRepositoryRuleTest : FirestoreEmulatorTestBase() {
 
     @Test
     fun observeAllStoreStaffAccounts_unauthenticatedUser_failsWithPermissionDenied() = runBlocking {
+        org.junit.Assume.assumeTrue("Firebase Firestore emulator is not running", isEmulatorAvailable())
         auth.signOut()
         val repository = StaffAccountRepository(firestore, auth)
 
