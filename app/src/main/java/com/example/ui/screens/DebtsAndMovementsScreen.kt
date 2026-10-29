@@ -1,8 +1,10 @@
 package com.example.ui.screens
 
+import android.app.Activity
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.ContextWrapper
 import android.content.Intent
 import android.graphics.Paint
 import android.graphics.Typeface
@@ -121,8 +123,12 @@ import com.example.data.models.Sale
 import com.example.ui.theme.LocalAFStoreSemanticColors
 import com.example.ui.viewmodels.AntarSalesViewModel
 import com.example.utils.ThermalReceiptPrintPayload
+import androidx.core.content.FileProvider
+import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Send
 import java.io.File
 import java.io.FileOutputStream
+import java.io.OutputStream
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
@@ -1731,10 +1737,10 @@ private fun UnifiedMovementsTimelineList(
             }
 
             val badgeLabel = when {
-                isCustomer && isPayment -> "✓ تحصيل دفعة عميل"
-                isCustomer && !isPayment -> "+ تسجيل دين عميل"
-                !isCustomer && isPayment -> "✓ سداد دفعة مورد"
-                else -> "+ مديونية فاتورة مورد"
+                isCustomer && isPayment -> "تحصيل دفعة عميل"
+                isCustomer && !isPayment -> "تسجيل دين عميل"
+                !isCustomer && isPayment -> "سداد دفعة مورد"
+                else -> "مديونية فاتورة مورد"
             }
 
             val canPayNow = if (isCustomer) {
@@ -1760,8 +1766,64 @@ private fun UnifiedMovementsTimelineList(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(13.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
+                    // Top Row: Redesigned Badge on Right, Date & Time on Left
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = accentColor.copy(alpha = if (isDark) 0.20f else 0.12f),
+                            border = BorderStroke(1.dp, accentColor.copy(alpha = 0.50f))
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.5.dp)
+                            ) {
+                                Icon(
+                                    imageVector = if (isPayment) Icons.Default.CheckCircle else Icons.Default.Add,
+                                    contentDescription = null,
+                                    tint = accentColor,
+                                    modifier = Modifier.size(13.dp)
+                                )
+                                Text(
+                                    text = badgeLabel,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = accentColor,
+                                    maxLines = 1,
+                                    softWrap = false
+                                )
+                            }
+                        }
+
+                        CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.History,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
+                                    modifier = Modifier.size(12.dp)
+                                )
+                                Text(
+                                    text = dateStr,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    fontFamily = FontFamily.Monospace
+                                )
+                            }
+                        }
+                    }
+
+                    // Middle Row: Party Name & Icon Box on Right, Amount & Remaining Balance on Left
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -1776,7 +1838,7 @@ private fun UnifiedMovementsTimelineList(
                                 shape = RoundedCornerShape(12.dp),
                                 color = accentColor.copy(alpha = if (isDark) 0.18f else 0.14f),
                                 border = BorderStroke(1.dp, accentColor.copy(alpha = 0.65f)),
-                                modifier = Modifier.size(40.dp)
+                                modifier = Modifier.size(42.dp)
                             ) {
                                 Box(contentAlignment = Alignment.Center) {
                                     Icon(
@@ -1789,53 +1851,36 @@ private fun UnifiedMovementsTimelineList(
                             }
 
                             Column(modifier = Modifier.weight(1f)) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                ) {
+                                Text(
+                                    text = item.partyName,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    fontSize = 15.sp,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                if (item.notes.isNotBlank()) {
+                                    Spacer(modifier = Modifier.height(2.dp))
                                     Text(
-                                        text = item.partyName,
-                                        fontWeight = FontWeight.ExtraBold,
-                                        fontSize = 15.sp,
-                                        color = MaterialTheme.colorScheme.onSurface,
+                                        text = item.notes,
+                                        fontSize = 12.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis
                                     )
-                                    Surface(
-                                        shape = RoundedCornerShape(8.dp),
-                                        color = accentColor.copy(alpha = 0.14f),
-                                        border = BorderStroke(1.dp, accentColor.copy(alpha = 0.55f))
-                                    ) {
-                                        Text(
-                                            text = badgeLabel,
-                                            fontSize = 10.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            color = accentColor,
-                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                        )
-                                    }
                                 }
-                                Text(
-                                    text = item.notes,
-                                    fontSize = 12.sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    maxLines = 2,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                                Text(
-                                    text = dateStr,
-                                    fontSize = 11.sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
                             }
                         }
 
+                        Spacer(modifier = Modifier.width(8.dp))
+
                         Column(horizontalAlignment = Alignment.End) {
                             Text(
-                                text = "${if (isPayment) "-" else "+"}${String.format(Locale.US, "%.2f", item.amount)} $currencySymbol",
+                                text = "${if (isPayment) "-" else "+"}${String.format(Locale.US, "%.2f", item.amount).toEnglishDigits()} $currencySymbol",
                                 fontWeight = FontWeight.ExtraBold,
-                                fontSize = 15.5.sp,
-                                color = accentColor
+                                fontSize = 16.sp,
+                                color = accentColor,
+                                fontFamily = FontFamily.Monospace
                             )
                             val currentRemaining = if (isCustomer) {
                                 item.customerRef?.balanceDebt ?: 0.0
@@ -1843,10 +1888,11 @@ private fun UnifiedMovementsTimelineList(
                                 item.supplierInvoiceRef?.remainingDebt ?: 0.0
                             }
                             Text(
-                                text = "المتبقي: ${String.format(Locale.US, "%.1f", currentRemaining)} $currencySymbol",
+                                text = "المتبقي: ${String.format(Locale.US, "%.1f", currentRemaining).toEnglishDigits()} $currencySymbol",
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.Bold,
-                                color = if (currentRemaining > 0.009) semantic.debtAmber else semantic.profitGreen
+                                color = if (currentRemaining > 0.009) semantic.debtAmber else semantic.profitGreen,
+                                fontFamily = FontFamily.Monospace
                             )
                         }
                     }
@@ -4015,6 +4061,26 @@ private fun CustomerAccountStatementDialog(
                     ) {
                         IconButton(
                             onClick = {
+                                shareCustomerStatementPdf(
+                                    context = context,
+                                    customer = customer,
+                                    transactions = transactions,
+                                    storeName = storeName,
+                                    storePhone = storePhone,
+                                    currencySymbol = currencySymbol,
+                                    footerText = footerText
+                                )
+                            },
+                            modifier = Modifier.testTag("stmt_header_share_pdf_btn")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Share,
+                                contentDescription = "حفظ وإرسال PDF",
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                        IconButton(
+                            onClick = {
                                 printCustomerStatementViaSystemPrintManager(
                                     context = context,
                                     customer = customer,
@@ -4247,41 +4313,76 @@ private fun CustomerAccountStatementDialog(
 
                 HorizontalDivider(color = semantic.cardBorder)
 
-                // Primary PDF Export Button (تصدير / طباعة كشف الحساب PDF)
-                Button(
-                    onClick = {
-                        printCustomerStatementViaSystemPrintManager(
-                            context = context,
-                            customer = customer,
-                            transactions = transactions,
-                            storeName = storeName,
-                            storePhone = storePhone,
-                            currencySymbol = currencySymbol,
-                            footerText = footerText
-                        )
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
-                    shape = RoundedCornerShape(10.dp),
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(42.dp)
-                        .testTag("stmt_export_pdf_btn")
-                ) {
-                    Icon(Icons.Default.Print, contentDescription = null, tint = Color.White, modifier = Modifier.size(17.dp))
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(
-                        text = "تصدير / طباعة كشف الحساب (PDF)",
-                        fontSize = 12.5.sp,
-                        fontWeight = FontWeight.ExtraBold,
-                        color = Color.White
-                    )
-                }
-
-                // Share & Action Buttons (واتساب + ماسنجر + نسخ الكشف)
+                // Row 1: Dual PDF Actions (حفظ وإرسال ملف PDF + طباعة A4)
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Button(
+                        onClick = {
+                            shareCustomerStatementPdf(
+                                context = context,
+                                customer = customer,
+                                transactions = transactions,
+                                storeName = storeName,
+                                storePhone = storePhone,
+                                currencySymbol = currencySymbol,
+                                footerText = footerText
+                            )
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+                        shape = RoundedCornerShape(10.dp),
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
+                        modifier = Modifier
+                            .weight(1.2f)
+                            .height(44.dp)
+                            .testTag("stmt_export_pdf_btn")
+                    ) {
+                        Icon(Icons.Default.Download, contentDescription = null, tint = Color.White, modifier = Modifier.size(17.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "حفظ وإرسال ملف PDF",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = Color.White
+                        )
+                    }
+
+                    OutlinedButton(
+                        onClick = {
+                            printCustomerStatementViaSystemPrintManager(
+                                context = context,
+                                customer = customer,
+                                transactions = transactions,
+                                storeName = storeName,
+                                storePhone = storePhone,
+                                currencySymbol = currencySymbol,
+                                footerText = footerText
+                            )
+                        },
+                        border = BorderStroke(1.2.dp, MaterialTheme.colorScheme.primary),
+                        shape = RoundedCornerShape(10.dp),
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
+                        modifier = Modifier
+                            .weight(0.95f)
+                            .height(44.dp)
+                            .testTag("stmt_print_spooler_btn")
+                    ) {
+                        Icon(Icons.Default.Print, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(17.dp))
+                        Spacer(modifier = Modifier.width(5.dp))
+                        Text(
+                            text = "طباعة A4",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                }
+
+                // Row 2: Instant Sending & Action Channels (واتساب + ماسنجر + مشاركة عامة + نسخ)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(5.dp)
                 ) {
                     Button(
                         onClick = {
@@ -4293,14 +4394,15 @@ private fun CustomerAccountStatementDialog(
                         },
                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF16A34A)),
                         shape = RoundedCornerShape(10.dp),
-                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp),
+                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 6.dp),
                         modifier = Modifier
-                            .weight(1.15f)
+                            .weight(1.05f)
+                            .height(38.dp)
                             .testTag("stmt_share_whatsapp_btn")
                     ) {
-                        Icon(Icons.Default.Share, contentDescription = null, tint = Color.White, modifier = Modifier.size(15.dp))
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text("مشاركة واتساب", fontSize = 11.5.sp, fontWeight = FontWeight.ExtraBold, color = Color.White, maxLines = 1)
+                        Icon(Icons.Default.Share, contentDescription = null, tint = Color.White, modifier = Modifier.size(13.dp))
+                        Spacer(modifier = Modifier.width(3.dp))
+                        Text("واتساب", fontSize = 11.sp, fontWeight = FontWeight.ExtraBold, color = Color.White, maxLines = 1)
                     }
 
                     Button(
@@ -4312,14 +4414,36 @@ private fun CustomerAccountStatementDialog(
                         },
                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0084FF)),
                         shape = RoundedCornerShape(10.dp),
-                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp),
+                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 6.dp),
                         modifier = Modifier
-                            .weight(1.15f)
+                            .weight(1.05f)
+                            .height(38.dp)
                             .testTag("stmt_share_messenger_btn")
                     ) {
-                        Icon(Icons.Default.Share, contentDescription = null, tint = Color.White, modifier = Modifier.size(15.dp))
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text("مشاركة ماسنجر", fontSize = 11.5.sp, fontWeight = FontWeight.ExtraBold, color = Color.White, maxLines = 1)
+                        Icon(Icons.Default.Share, contentDescription = null, tint = Color.White, modifier = Modifier.size(13.dp))
+                        Spacer(modifier = Modifier.width(3.dp))
+                        Text("ماسنجر", fontSize = 11.sp, fontWeight = FontWeight.ExtraBold, color = Color.White, maxLines = 1)
+                    }
+
+                    OutlinedButton(
+                        onClick = {
+                            val sendIntent = Intent(Intent.ACTION_SEND).apply {
+                                type = "text/plain"
+                                putExtra(Intent.EXTRA_TEXT, statementText)
+                                putExtra(Intent.EXTRA_SUBJECT, "كشف حساب عميل: ${customer.name}")
+                            }
+                            context.startActivity(Intent.createChooser(sendIntent, "إرسال كشف حساب العميل"))
+                        },
+                        shape = RoundedCornerShape(10.dp),
+                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 6.dp),
+                        modifier = Modifier
+                            .weight(0.95f)
+                            .height(38.dp)
+                            .testTag("stmt_share_all_btn")
+                    ) {
+                        Icon(Icons.Default.Send, contentDescription = null, modifier = Modifier.size(12.dp))
+                        Spacer(modifier = Modifier.width(3.dp))
+                        Text("مشاركة", fontSize = 10.5.sp, fontWeight = FontWeight.Bold, maxLines = 1)
                     }
 
                     OutlinedButton(
@@ -4331,12 +4455,13 @@ private fun CustomerAccountStatementDialog(
                         shape = RoundedCornerShape(10.dp),
                         contentPadding = PaddingValues(horizontal = 6.dp, vertical = 6.dp),
                         modifier = Modifier
-                            .weight(0.85f)
+                            .weight(0.8f)
+                            .height(38.dp)
                             .testTag("stmt_copy_btn")
                     ) {
-                        Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(15.dp))
+                        Icon(Icons.Default.ContentCopy, contentDescription = null, modifier = Modifier.size(13.dp))
                         Spacer(modifier = Modifier.width(3.dp))
-                        Text("نسخ", fontSize = 11.5.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+                        Text("نسخ", fontSize = 10.5.sp, fontWeight = FontWeight.Bold, maxLines = 1)
                     }
                 }
 
@@ -5823,61 +5948,84 @@ internal fun buildCustomerInvoiceShareMessage(
     }.trim()
 }
 
+internal fun formatPhoneNumberForWhatsApp(rawPhone: String): String {
+    val clean = rawPhone.filter { it.isDigit() }
+    if (clean.isBlank()) return ""
+    return when {
+        clean.startsWith("00") -> clean.removePrefix("00")
+        clean.startsWith("213") -> clean
+        clean.startsWith("0") && clean.length == 10 -> "213" + clean.substring(1)
+        clean.length == 9 && (clean.startsWith("5") || clean.startsWith("6") || clean.startsWith("7")) -> "213$clean"
+        else -> clean
+    }
+}
+
 internal fun shareTextViaWhatsApp(
     context: Context,
     phone: String,
     text: String
 ) {
-    // 1. Copy to clipboard automatically as a helpful backup
+    // 1. Copy to clipboard automatically as a reliable backup
     try {
         val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
         clipboard?.setPrimaryClip(ClipData.newPlainText("رسالة واتساب", text))
     } catch (_: Exception) {
     }
 
-    val phoneClean = phone.filter { it.isDigit() }
+    val formattedPhone = formatPhoneNumberForWhatsApp(phone)
     val encoded = Uri.encode(text)
 
-    // 2. Open direct WhatsApp chat via wa.me if phone exists, or general wa.me
-    try {
-        val url = if (phoneClean.isNotEmpty()) {
-            "https://wa.me/$phoneClean?text=$encoded"
-        } else {
-            "https://wa.me/?text=$encoded"
+    // 2. Direct whatsapp:// URI with international phone if available
+    if (formattedPhone.isNotBlank()) {
+        try {
+            val directUri = Uri.parse("whatsapp://send?phone=$formattedPhone&text=$encoded")
+            val intent = Intent(Intent.ACTION_VIEW, directUri).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            context.startActivity(intent)
+            return
+        } catch (_: Exception) {
         }
-        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+
+        // 3. wa.me web link with normalized phone
+        try {
+            val url = "https://wa.me/$formattedPhone?text=$encoded"
+            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            context.startActivity(intent)
+            return
+        } catch (_: Exception) {
         }
-        context.startActivity(intent)
-        return
-    } catch (_: Exception) {
     }
 
-    // 3. Fallback: try explicit WhatsApp package ACTION_SEND
-    try {
-        val waIntent = Intent(Intent.ACTION_SEND).apply {
-            type = "text/plain"
-            putExtra(Intent.EXTRA_TEXT, text)
-            setPackage("com.whatsapp")
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    // 4. Try WhatsApp or WhatsApp Business package directly
+    for (pkg in listOf("com.whatsapp", "com.whatsapp.w4b")) {
+        try {
+            val waIntent = Intent(Intent.ACTION_SEND).apply {
+                type = "text/plain"
+                putExtra(Intent.EXTRA_TEXT, text)
+                setPackage(pkg)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            context.startActivity(waIntent)
+            return
+        } catch (_: Exception) {
         }
-        context.startActivity(waIntent)
-        return
-    } catch (_: Exception) {
     }
 
-    // 4. Universal Share Chooser fallback
+    // 5. Universal Share Chooser fallback
     try {
         val sendIntent = Intent(Intent.ACTION_SEND).apply {
             type = "text/plain"
             putExtra(Intent.EXTRA_TEXT, text)
         }
-        val chooser = Intent.createChooser(sendIntent, "مشاركة عبر واتساب").apply {
+        val chooser = Intent.createChooser(sendIntent, "مشاركة عبر واتساب أو التطبيقات الأخرى").apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
         context.startActivity(chooser)
     } catch (_: Exception) {
-        Toast.makeText(context, "تم نسخ تفاصيل الفاتورة للحافظة ✅", Toast.LENGTH_SHORT).show()
+        Toast.makeText(context, "تم نسخ تفاصيل الحساب للحافظة بنجاح ✅", Toast.LENGTH_SHORT).show()
     }
 }
 
@@ -5922,12 +6070,11 @@ internal fun shareTextViaMessenger(
 
     // 4. Fallback: System share sheet + clipboard notification
     try {
-        Toast.makeText(context, "تم نسخ الرسالة — اختر ماسنجر أو تطبيق المراسلة 📱", Toast.LENGTH_SHORT).show()
         val sendIntent = Intent(Intent.ACTION_SEND).apply {
             type = "text/plain"
             putExtra(Intent.EXTRA_TEXT, text)
         }
-        val chooser = Intent.createChooser(sendIntent, "مشاركة عبر ماسنجر").apply {
+        val chooser = Intent.createChooser(sendIntent, "مشاركة الرسالة عبر ماسنجر أو التطبيقات").apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
         context.startActivity(chooser)
@@ -6160,6 +6307,37 @@ internal fun ShareCustomerDebtAndInvoiceDialog(
                     }
                 }
 
+                if (selectedMode == "STATEMENT") {
+                    Button(
+                        onClick = {
+                            shareCustomerStatementPdf(
+                                context = context,
+                                customer = customer,
+                                transactions = payload.transactions,
+                                storeName = storeName,
+                                storePhone = storePhone,
+                                currencySymbol = currencySymbol,
+                                footerText = footerText
+                            )
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(44.dp)
+                            .testTag("share_dialog_statement_pdf_btn")
+                    ) {
+                        Icon(Icons.Default.Download, contentDescription = null, tint = Color.White, modifier = Modifier.size(17.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "إرسال وحفظ كشف الحساب كملف PDF",
+                            fontWeight = FontWeight.ExtraBold,
+                            fontSize = 12.5.sp,
+                            color = Color.White
+                        )
+                    }
+                }
+
                 // Primary Action Buttons: WhatsApp + Messenger
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -6268,8 +6446,10 @@ private fun printDebtReceiptViaSystemPrintManager(
     currencySymbol: String,
     footerText: String
 ) {
-    val printManager = context.getSystemService(Context.PRINT_SERVICE) as? PrintManager
-    if (printManager == null) {
+    val activity = context.findActivity()
+    val targetContext = activity ?: context
+    val printManager = targetContext.getSystemService(Context.PRINT_SERVICE) as? PrintManager
+    if (activity == null || printManager == null) {
         Toast.makeText(context, "خدمة الطباعة غير متوفرة على هذا الجهاز", Toast.LENGTH_SHORT).show()
         return
     }
@@ -6283,7 +6463,8 @@ private fun printDebtReceiptViaSystemPrintManager(
     val isCustomer = receipt.partyType == "CUSTOMER"
     val dateFormatted = SimpleDateFormat("dd-MM-yyyy • HH:mm", Locale.US).format(Date(receipt.timestampMillis))
 
-    printManager.print(
+    try {
+        printManager.print(
         jobName,
         object : PrintDocumentAdapter() {
             override fun onLayout(
@@ -6498,10 +6679,22 @@ private fun printDebtReceiptViaSystemPrintManager(
             .setMediaSize(PrintAttributes.MediaSize.ISO_A4)
             .setColorMode(PrintAttributes.COLOR_MODE_COLOR)
             .build()
-    )
+        )
+    } catch (e: Exception) {
+        Toast.makeText(context, "تعذر فتح نافذة الطباعة: ${e.localizedMessage}", Toast.LENGTH_SHORT).show()
+    }
 }
 
-private fun printCustomerStatementViaSystemPrintManager(
+private fun Context.findActivity(): Activity? {
+    var current: Context? = this
+    while (current is ContextWrapper) {
+        if (current is Activity) return current
+        current = current.baseContext
+    }
+    return null
+}
+
+internal fun createCustomerStatementPdfDocument(
     context: Context,
     customer: Customer,
     transactions: List<CustomerTransaction>,
@@ -6509,15 +6702,7 @@ private fun printCustomerStatementViaSystemPrintManager(
     storePhone: String,
     currencySymbol: String,
     footerText: String
-) {
-    val printManager = context.getSystemService(Context.PRINT_SERVICE) as? PrintManager
-    if (printManager == null) {
-        Toast.makeText(context, "خدمة الطباعة غير متوفرة على هذا الجهاز", Toast.LENGTH_SHORT).show()
-        return
-    }
-
-    val safeCustName = customer.name.replace(Regex("[^\\p{L}\\p{N}_-]+"), "_").ifBlank { "Customer" }
-    val jobName = "Customer_Statement_${safeCustName}_${System.currentTimeMillis() / 1000}"
+): PdfDocument {
     val issueDateStr = SimpleDateFormat("yyyy-MM-dd hh:mm a", Locale.US).format(Date()).toEnglishDigits()
     val totalDebtsAdded = transactions.filter { it.type != "PAYMENT" }.sumOf { it.amount }
     val totalPaymentsPaid = transactions.filter { it.type == "PAYMENT" }.sumOf { it.amount }
@@ -6539,41 +6724,9 @@ private fun printCustomerStatementViaSystemPrintManager(
     }
     val totalPages = chunks.size.coerceAtLeast(1)
 
-    printManager.print(
-        jobName,
-        object : PrintDocumentAdapter() {
-            override fun onLayout(
-                oldAttributes: PrintAttributes?,
-                newAttributes: PrintAttributes?,
-                cancellationSignal: CancellationSignal?,
-                callback: LayoutResultCallback?,
-                extras: Bundle?
-            ) {
-                if (cancellationSignal?.isCanceled == true) {
-                    callback?.onLayoutCancelled()
-                    return
-                }
-                val info = PrintDocumentInfo.Builder("$jobName.pdf")
-                    .setContentType(PrintDocumentInfo.CONTENT_TYPE_DOCUMENT)
-                    .setPageCount(totalPages)
-                    .build()
-                callback?.onLayoutFinished(info, true)
-            }
-
-            override fun onWrite(
-                pages: Array<out PageRange>?,
-                destination: ParcelFileDescriptor?,
-                cancellationSignal: CancellationSignal?,
-                callback: WriteResultCallback?
-            ) {
-                if (destination == null) {
-                    callback?.onWriteFailed("ملف الوجهة غير صالح")
-                    return
-                }
-
-                val pdfDoc = PdfDocument()
-                try {
-                    val pageWidth = 595
+    val pdfDoc = PdfDocument()
+    try {
+        val pageWidth = 595
                     val pageHeight = 842
                     val margin = 36f
                     val leftEdge = margin
@@ -6848,22 +7001,202 @@ private fun printCustomerStatementViaSystemPrintManager(
                         pdfDoc.finishPage(page)
                     }
 
-                    FileOutputStream(destination.fileDescriptor).use { out ->
-                        pdfDoc.writeTo(out)
-                    }
-                    callback?.onWriteFinished(arrayOf(PageRange.ALL_PAGES))
-                } catch (e: Exception) {
-                    callback?.onWriteFailed(e.message ?: "خطأ أثناء إنشاء ملف PDF لكشف الحساب")
-                } finally {
-                    pdfDoc.close()
-                }
-            }
-        },
-        PrintAttributes.Builder()
-            .setMediaSize(PrintAttributes.MediaSize.ISO_A4)
-            .setColorMode(PrintAttributes.COLOR_MODE_COLOR)
-            .build()
+        return pdfDoc
+    } catch (e: Exception) {
+        pdfDoc.close()
+        throw e
+    }
+}
+
+internal fun generateCustomerStatementPdfFile(
+    context: Context,
+    customer: Customer,
+    transactions: List<CustomerTransaction>,
+    storeName: String,
+    storePhone: String,
+    currencySymbol: String,
+    footerText: String
+): File {
+    val dir = File(context.cacheDir, "statements").apply { if (!exists()) mkdirs() }
+    val safeCustName = customer.name.replace(Regex("[^\\p{L}\\p{N}_-]+"), "_").ifBlank { "Customer" }
+    val dateTag = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
+    val pdfFile = File(dir, "Statement_${safeCustName}_$dateTag.pdf")
+    val pdfDoc = createCustomerStatementPdfDocument(
+        context = context,
+        customer = customer,
+        transactions = transactions,
+        storeName = storeName,
+        storePhone = storePhone,
+        currencySymbol = currencySymbol,
+        footerText = footerText
     )
+    try {
+        FileOutputStream(pdfFile).use { out ->
+            pdfDoc.writeTo(out)
+        }
+    } finally {
+        pdfDoc.close()
+    }
+    return pdfFile
+}
+
+internal fun shareCustomerStatementPdf(
+    context: Context,
+    customer: Customer,
+    transactions: List<CustomerTransaction>,
+    storeName: String,
+    storePhone: String,
+    currencySymbol: String,
+    footerText: String,
+    targetPackage: String? = null
+) {
+    try {
+        val file = generateCustomerStatementPdfFile(
+            context = context,
+            customer = customer,
+            transactions = transactions,
+            storeName = storeName,
+            storePhone = storePhone,
+            currencySymbol = currencySymbol,
+            footerText = footerText
+        )
+        val fileUri = FileProvider.getUriForFile(
+            context,
+            "${context.packageName}.fileprovider",
+            file
+        )
+
+        val balanceFormatted = "${String.format(Locale.US, "%.2f", customer.balanceDebt)} $currencySymbol"
+        val subject = "كشف حساب عميل: ${customer.name}"
+        val extraText = "مرفق كشف حساب العميل: ${customer.name}\nالرصيد المتبقي: $balanceFormatted\nمن متجر: ${storeName.ifBlank { "المتجر" }}"
+
+        val shareIntent = Intent(Intent.ACTION_SEND).apply {
+            type = "application/pdf"
+            putExtra(Intent.EXTRA_STREAM, fileUri)
+            putExtra(Intent.EXTRA_SUBJECT, subject)
+            putExtra(Intent.EXTRA_TEXT, extraText)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            clipData = ClipData.newRawUri("كشف حساب PDF", fileUri)
+            if (!targetPackage.isNullOrBlank()) {
+                setPackage(targetPackage)
+            }
+        }
+
+        if (!targetPackage.isNullOrBlank()) {
+            try {
+                context.startActivity(shareIntent)
+                Toast.makeText(context, "جاري إرسال كشف الحساب (PDF) 📄", Toast.LENGTH_SHORT).show()
+                return
+            } catch (_: Exception) {
+            }
+        }
+
+        val chooser = Intent.createChooser(shareIntent, "حفظ أو إرسال كشف حساب العميل (PDF)").apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        context.startActivity(chooser)
+        Toast.makeText(context, "تم تجهيز ملف كشف الحساب (PDF) بنجاح 📄", Toast.LENGTH_SHORT).show()
+    } catch (e: Exception) {
+        Toast.makeText(context, "تعذر إنشاء ملف كشف الحساب: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
+    }
+}
+
+private fun printCustomerStatementViaSystemPrintManager(
+    context: Context,
+    customer: Customer,
+    transactions: List<CustomerTransaction>,
+    storeName: String,
+    storePhone: String,
+    currencySymbol: String,
+    footerText: String
+) {
+    val activity = context.findActivity()
+    val targetContext = activity ?: context
+    val printManager = targetContext.getSystemService(Context.PRINT_SERVICE) as? PrintManager
+    if (activity == null || printManager == null) {
+        Toast.makeText(context, "جاري فتح ومشاركة ملف كشف الحساب (PDF) للحفظ والطباعة 📄", Toast.LENGTH_LONG).show()
+        shareCustomerStatementPdf(context, customer, transactions, storeName, storePhone, currencySymbol, footerText)
+        return
+    }
+
+    val safeCustName = customer.name.replace(Regex("[^\\p{L}\\p{N}_-]+"), "_").ifBlank { "Customer" }
+    val jobName = "Customer_Statement_${safeCustName}_${System.currentTimeMillis() / 1000}"
+
+    val firstPageCapacity = 14
+    val nextPageCapacity = 20
+    val totalRows = transactions.size
+    val totalPages = if (totalRows <= firstPageCapacity) 1 else 1 + (totalRows - firstPageCapacity + nextPageCapacity - 1) / nextPageCapacity
+
+    try {
+        printManager.print(
+            jobName,
+            object : PrintDocumentAdapter() {
+                override fun onLayout(
+                    oldAttributes: PrintAttributes?,
+                    newAttributes: PrintAttributes?,
+                    cancellationSignal: CancellationSignal?,
+                    callback: LayoutResultCallback?,
+                    extras: Bundle?
+                ) {
+                    if (cancellationSignal?.isCanceled == true) {
+                        callback?.onLayoutCancelled()
+                        return
+                    }
+                    val info = PrintDocumentInfo.Builder("$jobName.pdf")
+                        .setContentType(PrintDocumentInfo.CONTENT_TYPE_DOCUMENT)
+                        .setPageCount(totalPages)
+                        .build()
+                    callback?.onLayoutFinished(info, true)
+                }
+
+                override fun onWrite(
+                    pages: Array<out PageRange>?,
+                    destination: ParcelFileDescriptor?,
+                    cancellationSignal: CancellationSignal?,
+                    callback: WriteResultCallback?
+                ) {
+                    if (destination == null) {
+                        callback?.onWriteFailed("ملف الوجهة غير صالح")
+                        return
+                    }
+                    if (cancellationSignal?.isCanceled == true) {
+                        callback?.onWriteCancelled()
+                        return
+                    }
+
+                    try {
+                        val pdfDoc = createCustomerStatementPdfDocument(
+                            context = context,
+                            customer = customer,
+                            transactions = transactions,
+                            storeName = storeName,
+                            storePhone = storePhone,
+                            currencySymbol = currencySymbol,
+                            footerText = footerText
+                        )
+                        try {
+                            FileOutputStream(destination.fileDescriptor).use { out ->
+                                pdfDoc.writeTo(out)
+                            }
+                            callback?.onWriteFinished(arrayOf(PageRange.ALL_PAGES))
+                        } finally {
+                            pdfDoc.close()
+                        }
+                    } catch (e: Exception) {
+                        callback?.onWriteFailed(e.message ?: "خطأ أثناء إنشاء ملف PDF لكشف الحساب")
+                    }
+                }
+            },
+            PrintAttributes.Builder()
+                .setMediaSize(PrintAttributes.MediaSize.ISO_A4)
+                .setColorMode(PrintAttributes.COLOR_MODE_COLOR)
+                .build()
+        )
+    } catch (e: Exception) {
+        Toast.makeText(context, "تعذر فتح خدمة الطباعة — جاري فتح ومشاركة ملف PDF بدلاً من ذلك 📄", Toast.LENGTH_LONG).show()
+        shareCustomerStatementPdf(context, customer, transactions, storeName, storePhone, currencySymbol, footerText)
+    }
 }
 
 private fun printSupplierStatementViaSystemPrintManager(
@@ -6876,9 +7209,11 @@ private fun printSupplierStatementViaSystemPrintManager(
     currencySymbol: String,
     footerText: String
 ) {
-    val printManager = context.getSystemService(Context.PRINT_SERVICE) as? PrintManager
-    if (printManager == null) {
-        Toast.makeText(context, "خدمة الطباعة غير متوفرة على هذا الجهاز", Toast.LENGTH_SHORT).show()
+    val activity = context.findActivity()
+    val targetContext = activity ?: context
+    val printManager = targetContext.getSystemService(Context.PRINT_SERVICE) as? PrintManager
+    if (activity == null || printManager == null) {
+        Toast.makeText(context, "خدمة الطباعة المباشرة غير متوفرة على هذا الجهاز", Toast.LENGTH_SHORT).show()
         return
     }
 
@@ -6904,7 +7239,8 @@ private fun printSupplierStatementViaSystemPrintManager(
     }
     val totalPages = chunks.size.coerceAtLeast(1)
 
-    printManager.print(
+    try {
+        printManager.print(
         jobName,
         object : PrintDocumentAdapter() {
             override fun onLayout(
@@ -7209,7 +7545,10 @@ private fun printSupplierStatementViaSystemPrintManager(
             .setMediaSize(PrintAttributes.MediaSize.ISO_A4)
             .setColorMode(PrintAttributes.COLOR_MODE_COLOR)
             .build()
-    )
+        )
+    } catch (e: Exception) {
+        Toast.makeText(context, "تعذر فتح نافذة الطباعة: ${e.localizedMessage}", Toast.LENGTH_SHORT).show()
+    }
 }
 
 

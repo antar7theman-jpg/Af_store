@@ -1,7 +1,9 @@
 package com.example.ui.screens
 
+import android.app.Activity
 import android.content.ClipData
 import android.content.Context
+import android.content.ContextWrapper
 import android.content.Intent
 import android.graphics.Canvas as AndroidCanvas
 import android.graphics.Color as AndroidColor
@@ -875,14 +877,26 @@ object SalesReportPdfExporter {
         }
     }
 
-    fun printReport(context: Context, payload: SalesReportPdfPayload) {
-        try {
-            val printManager = context.getSystemService(Context.PRINT_SERVICE) as? PrintManager
-            if (printManager == null) {
-                Toast.makeText(context, "خدمة الطباعة غير متوفرة على هذا الجهاز", Toast.LENGTH_SHORT).show()
-                return
-            }
+    private fun findActivity(context: Context): Activity? {
+        var current: Context? = context
+        while (current is ContextWrapper) {
+            if (current is Activity) return current
+            current = current.baseContext
+        }
+        return null
+    }
 
+    fun printReport(context: Context, payload: SalesReportPdfPayload) {
+        val activity = findActivity(context)
+        val targetContext = activity ?: context
+        val printManager = targetContext.getSystemService(Context.PRINT_SERVICE) as? PrintManager
+        if (activity == null || printManager == null) {
+            Toast.makeText(context, "جاري فتح ومشاركة ملف التقرير (PDF) للحفظ والطباعة 📄", Toast.LENGTH_LONG).show()
+            shareReportPdf(context, payload)
+            return
+        }
+
+        try {
             val jobName = "تقرير_المبيعات_${payload.period.name}"
             val printAdapter = object : PrintDocumentAdapter() {
                 override fun onLayout(
@@ -926,7 +940,8 @@ object SalesReportPdfExporter {
 
             printManager.print(jobName, printAdapter, PrintAttributes.Builder().build())
         } catch (e: Exception) {
-            Toast.makeText(context, "تعذر فتح نافذة الطباعة: ${e.localizedMessage}", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, "جاري فتح ومشاركة ملف التقرير (PDF) بدلاً من الطباعة المباشرة 📄", Toast.LENGTH_LONG).show()
+            shareReportPdf(context, payload)
         }
     }
 }

@@ -3,11 +3,15 @@ package com.example.ui.screens
 import android.Manifest
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.location.LocationManager
 import android.net.Uri
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
@@ -26,6 +30,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDirection
@@ -52,6 +57,10 @@ fun WorkerTrackingDashboardScreen(
 
     val workerLocations by vm?.workerLocations?.collectAsStateWithLifecycle() ?: remember { mutableStateOf(emptyList()) }
 
+    val prefs = remember { context.getSharedPreferences("worker_tracking_prefs", Context.MODE_PRIVATE) }
+    var isAutoSyncEnabled by remember { mutableStateOf(prefs.getBoolean("gps_auto_sync_enabled", false)) }
+    var autoSyncIntervalSeconds by remember { mutableStateOf(prefs.getInt("gps_auto_sync_interval", 30)) }
+
     var searchQuery by remember { mutableStateOf("") }
     var selectedStatusNote by remember { mutableStateOf("في مهمة ميدانية") }
     var selectedFilterStatus by remember { mutableStateOf("الكل") }
@@ -59,17 +68,16 @@ fun WorkerTrackingDashboardScreen(
     var showBroadcastDialog by remember { mutableStateOf(false) }
     var broadcastMessage by remember { mutableStateOf("") }
 
-    LaunchedEffect(Unit) {
-        vm?.triggerComprehensiveSync()
-    }
+    val executeGpsLocationSync: (isAuto: Boolean) -> Unit = { isAuto ->
+        val hasPermission = ContextCompat.checkSelfPermission(
+            context, Manifest.permission.ACCESS_FINE_LOCATION
+        ) == PackageManager.PERMISSION_GRANTED ||
+        ContextCompat.checkSelfPermission(
+            context, Manifest.permission.ACCESS_COARSE_LOCATION
+        ) == PackageManager.PERMISSION_GRANTED
 
-    val locationPermissionLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestMultiplePermissions()
-    ) { permissions ->
-        val granted = permissions[Manifest.permission.ACCESS_FINE_LOCATION] == true ||
-                permissions[Manifest.permission.ACCESS_COARSE_LOCATION] == true
-        if (granted) {
-            isLocating = true
+        if (hasPermission) {
+            if (!isAuto) isLocating = true
             try {
                 val locationManager = context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager
                 val location = locationManager?.getLastKnownLocation(LocationManager.GPS_PROVIDER)
@@ -90,13 +98,42 @@ fun WorkerTrackingDashboardScreen(
                     lng = lng,
                     statusNote = selectedStatusNote
                 )
-                Toast.makeText(context, "تم تحديد موقع GPS بدقة ومزامنته مع السحابة الفورية ✓", Toast.LENGTH_SHORT).show()
+                if (!isAuto) {
+                    Toast.makeText(context, "تم تحديد موقع GPS بدقة ومزامنته مع السحابة الفورية ✓", Toast.LENGTH_SHORT).show()
+                }
             } catch (e: SecurityException) {
                 isLocating = false
-                Toast.makeText(context, "صلاحية الموقع مرفوضة", Toast.LENGTH_SHORT).show()
+                if (!isAuto) {
+                    Toast.makeText(context, "صلاحية الموقع مرفوضة", Toast.LENGTH_SHORT).show()
+                }
             }
+        }
+    }
+
+    val locationPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestMultiplePermissions()
+    ) { permissions ->
+        val granted = permissions[Manifest.permission.ACCESS_FINE_LOCATION] == true ||
+                permissions[Manifest.permission.ACCESS_COARSE_LOCATION] == true
+        if (granted) {
+            executeGpsLocationSync(false)
         } else {
             Toast.makeText(context, "يجب منح صلاحية الموقع لتتبع GPS", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        vm?.triggerComprehensiveSync()
+    }
+
+    // Auto-sync background loop
+    LaunchedEffect(isAutoSyncEnabled, autoSyncIntervalSeconds, selectedStatusNote) {
+        if (isAutoSyncEnabled) {
+            executeGpsLocationSync(true)
+            while (isActive && isAutoSyncEnabled) {
+                delay(autoSyncIntervalSeconds * 1000L)
+                executeGpsLocationSync(true)
+            }
         }
     }
 
@@ -218,14 +255,163 @@ fun WorkerTrackingDashboardScreen(
                 elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
             ) {
                 Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Icon(Icons.Default.GpsFixed, contentDescription = null, tint = semantic.primary, modifier = Modifier.size(20.dp).offset(y = (-1).dp))
-                        Text(
-                            text = "بث ومشاركة موقعي الميداني (GPS Realtime)",
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 14.sp,
-                            color = semantic.textPrimary
-                        )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Icon(Icons.Default.GpsFixed, contentDescription = null, tint = semantic.primary, modifier = Modifier.size(20.dp).offset(y = (-1).dp))
+                            Text(
+                                text = "بث ومشاركة موقعي الميداني (GPS Realtime)",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 14.sp,
+                                color = semantic.textPrimary
+                            )
+                        }
+                    }
+
+                    // Auto-sync switch card
+                    Surface(
+                        shape = RoundedCornerShape(14.dp),
+                        color = if (isAutoSyncEnabled) Color(0xFF10B981).copy(alpha = 0.12f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                        border = BorderStroke(
+                            1.dp,
+                            if (isAutoSyncEnabled) Color(0xFF10B981).copy(alpha = 0.5f) else Color.Transparent
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(36.dp)
+                                            .clip(CircleShape)
+                                            .background(if (isAutoSyncEnabled) Color(0xFF10B981) else Color.Gray.copy(alpha = 0.2f)),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Icon(
+                                            imageVector = if (isAutoSyncEnabled) Icons.Default.Sync else Icons.Default.SyncDisabled,
+                                            contentDescription = null,
+                                            tint = if (isAutoSyncEnabled) Color.White else Color.Gray,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
+                                    Column {
+                                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                            Text(
+                                                text = "مزامنة الموقع تلقائياً",
+                                                fontWeight = FontWeight.Bold,
+                                                fontSize = 13.sp,
+                                                color = semantic.textPrimary
+                                            )
+                                            if (isAutoSyncEnabled) {
+                                                Surface(
+                                                    shape = RoundedCornerShape(6.dp),
+                                                    color = Color(0xFF10B981)
+                                                ) {
+                                                    Text(
+                                                        text = "نشط 🟢",
+                                                        color = Color.White,
+                                                        fontSize = 10.sp,
+                                                        fontWeight = FontWeight.Bold,
+                                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                                    )
+                                                }
+                                            }
+                                        }
+                                        Text(
+                                            text = if (isAutoSyncEnabled)
+                                                "يتم تحديث إحداثيات موقعك ورفعها للسحابة كل $autoSyncIntervalSeconds ثانية"
+                                            else
+                                                "تفعيل التحديث المستمر والتلقائي للموقع في السحابة للمدير",
+                                            fontSize = 11.sp,
+                                            color = semantic.textSecondary
+                                        )
+                                    }
+                                }
+
+                                Switch(
+                                    checked = isAutoSyncEnabled,
+                                    onCheckedChange = { checked ->
+                                        if (checked) {
+                                            val hasPerm = ContextCompat.checkSelfPermission(
+                                                context, Manifest.permission.ACCESS_FINE_LOCATION
+                                            ) == PackageManager.PERMISSION_GRANTED ||
+                                            ContextCompat.checkSelfPermission(
+                                                context, Manifest.permission.ACCESS_COARSE_LOCATION
+                                            ) == PackageManager.PERMISSION_GRANTED
+
+                                            if (!hasPerm) {
+                                                locationPermissionLauncher.launch(
+                                                    arrayOf(
+                                                        Manifest.permission.ACCESS_FINE_LOCATION,
+                                                        Manifest.permission.ACCESS_COARSE_LOCATION
+                                                    )
+                                                )
+                                            }
+                                        }
+                                        isAutoSyncEnabled = checked
+                                        prefs.edit().putBoolean("gps_auto_sync_enabled", checked).apply()
+                                        if (checked) {
+                                            Toast.makeText(context, "تم تفعيل المزامنة التلقائية للموقع بنجاح 🟢", Toast.LENGTH_SHORT).show()
+                                        } else {
+                                            Toast.makeText(context, "تم إيقاف المزامنة التلقائية للموقع ⚪", Toast.LENGTH_SHORT).show()
+                                        }
+                                    },
+                                    colors = SwitchDefaults.colors(
+                                        checkedThumbColor = Color.White,
+                                        checkedTrackColor = Color(0xFF10B981)
+                                    ),
+                                    modifier = Modifier.testTag("gps_auto_sync_switch")
+                                )
+                            }
+
+                            if (isAutoSyncEnabled) {
+                                HorizontalDivider(color = Color(0xFF10B981).copy(alpha = 0.2f), thickness = 0.5.dp)
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    Text(
+                                        text = "معدل التحديث:",
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        color = semantic.textSecondary
+                                    )
+                                    listOf(15 to "15 ثانية", 30 to "30 ثانية", 60 to "دقيقة واحدة", 120 to "دقيقتين").forEach { (sec, label) ->
+                                        val isSel = autoSyncIntervalSeconds == sec
+                                        Surface(
+                                            onClick = {
+                                                autoSyncIntervalSeconds = sec
+                                                prefs.edit().putInt("gps_auto_sync_interval", sec).apply()
+                                            },
+                                            shape = RoundedCornerShape(8.dp),
+                                            color = if (isSel) Color(0xFF10B981) else MaterialTheme.colorScheme.surface,
+                                            border = BorderStroke(1.dp, if (isSel) Color(0xFF10B981) else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                                        ) {
+                                            Text(
+                                                text = label,
+                                                fontSize = 10.5.sp,
+                                                fontWeight = if (isSel) FontWeight.Bold else FontWeight.Normal,
+                                                color = if (isSel) Color.White else semantic.textPrimary,
+                                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
 
                     Text(
@@ -262,17 +448,28 @@ fun WorkerTrackingDashboardScreen(
 
                     Button(
                         onClick = {
-                            locationPermissionLauncher.launch(
-                                arrayOf(
-                                    Manifest.permission.ACCESS_FINE_LOCATION,
-                                    Manifest.permission.ACCESS_COARSE_LOCATION
+                            val hasPermission = ContextCompat.checkSelfPermission(
+                                context, Manifest.permission.ACCESS_FINE_LOCATION
+                            ) == PackageManager.PERMISSION_GRANTED ||
+                            ContextCompat.checkSelfPermission(
+                                context, Manifest.permission.ACCESS_COARSE_LOCATION
+                            ) == PackageManager.PERMISSION_GRANTED
+
+                            if (hasPermission) {
+                                executeGpsLocationSync(false)
+                            } else {
+                                locationPermissionLauncher.launch(
+                                    arrayOf(
+                                        Manifest.permission.ACCESS_FINE_LOCATION,
+                                        Manifest.permission.ACCESS_COARSE_LOCATION
+                                    )
                                 )
-                            )
+                            }
                         },
                         enabled = !isLocating,
                         shape = RoundedCornerShape(12.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = semantic.primary),
-                        modifier = Modifier.fillMaxWidth().height(48.dp)
+                        modifier = Modifier.fillMaxWidth().height(48.dp).testTag("gps_manual_sync_button")
                     ) {
                         if (isLocating) {
                             CircularProgressIndicator(modifier = Modifier.size(20.dp), color = Color.White, strokeWidth = 2.dp)
@@ -281,7 +478,11 @@ fun WorkerTrackingDashboardScreen(
                         } else {
                             Icon(Icons.Default.MyLocation, contentDescription = null, modifier = Modifier.size(18.dp).offset(y = (-1).dp))
                             Spacer(Modifier.width(8.dp))
-                            Text("تحديث ومزامنة موقعي الآن بالـ GPS السحابي", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                            Text(
+                                text = if (isAutoSyncEnabled) "تحديث فوري الآن بالـ GPS السحابي" else "تحديث ومزامنة موقعي الآن بالـ GPS السحابي",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 13.sp
+                            )
                         }
                     }
                 }

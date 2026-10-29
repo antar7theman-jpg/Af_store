@@ -1,7 +1,9 @@
 package com.example.ui.screens
 
-import android.Manifest
+import android.app.Activity
 import android.content.Context
+import android.content.ContextWrapper
+import android.Manifest
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
@@ -246,11 +248,23 @@ object UniversalPdfReportExporter {
         }
     }
 
+    private fun findActivity(context: Context): Activity? {
+        var current: Context? = context
+        while (current is ContextWrapper) {
+            if (current is Activity) return current
+            current = current.baseContext
+        }
+        return null
+    }
+
     fun printReport(context: Context, payload: UniversalPdfReportPayload, desktopConfig: Any? = null) {
         try {
-            val printManager = context.getSystemService(Context.PRINT_SERVICE) as? PrintManager
-            if (printManager == null) {
-                Toast.makeText(context, "الطباعة غير متوفرة على هذا الجهاز", Toast.LENGTH_SHORT).show()
+            val activity = findActivity(context)
+            val targetContext = activity ?: context
+            val printManager = targetContext.getSystemService(Context.PRINT_SERVICE) as? PrintManager
+            if (activity == null || printManager == null) {
+                Toast.makeText(context, "الطباعة المباشرة غير متوفرة — جاري فتح ومشاركة ملف PDF بدلاً من ذلك 📄", Toast.LENGTH_SHORT).show()
+                shareReportPdf(context, payload)
                 return
             }
             val cfg = desktopConfig as? com.example.utils.DesktopPrinterConfig
@@ -294,7 +308,8 @@ object UniversalPdfReportExporter {
             }
             printManager.print(payload.title, adapter, printAttributesBuilder.build())
         } catch (e: Exception) {
-            Toast.makeText(context, "تعذر الطباعة: ${e.localizedMessage}", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, "جاري فتح ومشاركة ملف التقرير PDF بدلاً من الطباعة المباشرة 📄", Toast.LENGTH_SHORT).show()
+            shareReportPdf(context, payload)
         }
     }
 

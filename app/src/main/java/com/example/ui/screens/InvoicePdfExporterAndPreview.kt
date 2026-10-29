@@ -1,7 +1,9 @@
 package com.example.ui.screens
 
+import android.app.Activity
 import android.content.ClipData
 import android.content.Context
+import android.content.ContextWrapper
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Canvas as AndroidCanvas
@@ -534,51 +536,68 @@ object InvoicePdfExporter {
         }
     }
 
+    private fun findActivity(context: Context): Activity? {
+        var current: Context? = context
+        while (current is ContextWrapper) {
+            if (current is Activity) return current
+            current = current.baseContext
+        }
+        return null
+    }
+
     fun printInvoicePdf(context: Context, payload: InvoicePdfPayload) {
-        val printManager = context.getSystemService(Context.PRINT_SERVICE) as? PrintManager
-        if (printManager == null) {
-            Toast.makeText(context, "خدمة الطباعة غير متوفرة في هذا الجهاز", Toast.LENGTH_SHORT).show()
+        val activity = findActivity(context)
+        val targetContext = activity ?: context
+        val printManager = targetContext.getSystemService(Context.PRINT_SERVICE) as? PrintManager
+        if (activity == null || printManager == null) {
+            Toast.makeText(context, "جاري فتح ومشاركة ملف الفاتورة (PDF) للحفظ والطباعة 📄", Toast.LENGTH_LONG).show()
+            shareInvoicePdf(context, payload)
             return
         }
 
-        val jobName = "Invoice_${payload.invoiceNumber}"
-        val printAdapter = object : PrintDocumentAdapter() {
-            override fun onLayout(
-                oldAttributes: PrintAttributes?,
-                newAttributes: PrintAttributes?,
-                cancellationSignal: CancellationSignal?,
-                callback: LayoutResultCallback?,
-                extras: Bundle?
-            ) {
-                if (cancellationSignal?.isCanceled == true) {
-                    callback?.onLayoutCancelled()
-                    return
-                }
-                val info = PrintDocumentInfo.Builder(jobName)
-                    .setContentType(PrintDocumentInfo.CONTENT_TYPE_DOCUMENT)
-                    .setPageCount(1)
-                    .build()
-                callback?.onLayoutFinished(info, true)
-            }
-
-            override fun onWrite(
-                pages: Array<out PageRange>?,
-                destination: ParcelFileDescriptor?,
-                cancellationSignal: CancellationSignal?,
-                callback: WriteResultCallback?
-            ) {
-                try {
-                    ParcelFileDescriptor.AutoCloseOutputStream(destination).use { out ->
-                        writeInvoicePdfToStream(payload, out)
+        try {
+            val jobName = "Invoice_${payload.invoiceNumber}"
+            val printAdapter = object : PrintDocumentAdapter() {
+                override fun onLayout(
+                    oldAttributes: PrintAttributes?,
+                    newAttributes: PrintAttributes?,
+                    cancellationSignal: CancellationSignal?,
+                    callback: LayoutResultCallback?,
+                    extras: Bundle?
+                ) {
+                    if (cancellationSignal?.isCanceled == true) {
+                        callback?.onLayoutCancelled()
+                        return
                     }
-                    callback?.onWriteFinished(arrayOf(PageRange.ALL_PAGES))
-                } catch (e: Exception) {
-                    callback?.onWriteFailed(e.localizedMessage)
+                    val info = PrintDocumentInfo.Builder(jobName)
+                        .setContentType(PrintDocumentInfo.CONTENT_TYPE_DOCUMENT)
+                        .setPageCount(1)
+                        .build()
+                    callback?.onLayoutFinished(info, true)
+                }
+
+                override fun onWrite(
+                    pages: Array<out PageRange>?,
+                    destination: ParcelFileDescriptor?,
+                    cancellationSignal: CancellationSignal?,
+                    callback: WriteResultCallback?
+                ) {
+                    try {
+                        ParcelFileDescriptor.AutoCloseOutputStream(destination).use { out ->
+                            writeInvoicePdfToStream(payload, out)
+                        }
+                        callback?.onWriteFinished(arrayOf(PageRange.ALL_PAGES))
+                    } catch (e: Exception) {
+                        callback?.onWriteFailed(e.localizedMessage)
+                    }
                 }
             }
-        }
 
-        printManager.print(jobName, printAdapter, PrintAttributes.Builder().build())
+            printManager.print(jobName, printAdapter, PrintAttributes.Builder().build())
+        } catch (e: Exception) {
+            Toast.makeText(context, "جاري فتح ومشاركة ملف الفاتورة (PDF) بدلاً من الطباعة المباشرة 📄", Toast.LENGTH_LONG).show()
+            shareInvoicePdf(context, payload)
+        }
     }
 
     fun saveInvoicePdfToUri(context: Context, payload: InvoicePdfPayload, targetUri: Uri): Boolean {
