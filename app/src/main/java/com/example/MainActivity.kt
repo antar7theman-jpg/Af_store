@@ -111,6 +111,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -1042,6 +1043,23 @@ fun AFStoreMainApp(
                                 }
                             }
                         }
+                    }
+
+                    if (myStaffAccount.isTrial && !myStaffAccount.isOwner && myStaffAccount.isApproved) {
+                        val trialScope = androidx.compose.runtime.rememberCoroutineScope()
+                        com.example.ui.components.ActiveTrialManagerSessionCountdownBar(
+                            account = myStaffAccount,
+                            onTrialExpiredAutoTerminate = {
+                                val repo = StaffAccountRepository(appContext)
+                                StaffAccountRepository.recordTrialExpiredSession(appContext, myStaffAccount.fullName)
+                                StaffAccountRepository.clearPersistentStaffSession(appContext)
+                                trialScope.launch {
+                                    runCatching { repo.expireTrialAccountAutomatically(myStaffAccount) }
+                                    lastRoutedIdentityKey = ""
+                                    onSignOutFirebase()
+                                }
+                            }
+                        )
                     }
 
                     PendingStaffApprovalsBanner(

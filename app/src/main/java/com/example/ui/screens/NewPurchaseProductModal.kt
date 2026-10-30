@@ -904,7 +904,7 @@ fun NewPurchaseProductModal(
                                 verticalArrangement = Arrangement.spacedBy(12.dp)
                             ) {
                                 Text(
-                                    text = "أكواد الباركود للمنتج: 🏷️",
+                                    text = "أكواد الباركود للمنتج (يدعم عدة باركودات للسلعة): 🏷️",
                                     color = primaryBlue,
                                     fontWeight = FontWeight.ExtraBold,
                                     fontSize = 13.5.sp,
@@ -918,21 +918,23 @@ fun NewPurchaseProductModal(
                                     onValueChange = { unitBarcode = it },
                                     placeholder = {
                                         Text(
-                                            text = "🏷️ باركود القطعة / الوحدة\nالفردية (اختياري)",
-                                            fontSize = 13.5.sp,
+                                            text = "🏷️ باركود القطعة (يمكن إدخال عدة أكواد مفصولة بفاصلة ,)",
+                                            fontSize = 13.sp,
                                             textAlign = TextAlign.End,
-                                            lineHeight = 20.sp,
+                                            lineHeight = 19.sp,
                                             modifier = Modifier.fillMaxWidth()
                                         )
                                     },
                                     leadingIcon = {
                                         IconButton(
-                                            onClick = { unitBarcode = generateRandomBarcode("613") },
+                                            onClick = {
+                                                unitBarcode = Product.mergeBarcodeStrings(unitBarcode, generateRandomBarcode("613"))
+                                            },
                                             modifier = Modifier.testTag("generate_unit_barcode_btn")
                                         ) {
                                             Icon(
                                                 imageVector = Icons.Default.Autorenew,
-                                                contentDescription = "توليد باركود تلقائي",
+                                                contentDescription = "توليد وإضافة باركود تلقائي",
                                                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                                 modifier = Modifier.size(24.dp)
                                             )
@@ -945,7 +947,7 @@ fun NewPurchaseProductModal(
                                         ) {
                                             Icon(
                                                 imageVector = Icons.Default.PhotoCamera,
-                                                contentDescription = "مسح باركود القطعة بالكاميرا",
+                                                contentDescription = "مسح وإضافة باركود القطعة بالكاميرا",
                                                 tint = primaryBlue,
                                                 modifier = Modifier.size(24.dp)
                                             )
@@ -967,6 +969,17 @@ fun NewPurchaseProductModal(
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .testTag("new_product_unit_barcode_input")
+                                )
+
+                                MultiBarcodeChipsAndQuickAdder(
+                                    rawBarcodes = unitBarcode,
+                                    onBarcodesChanged = { unitBarcode = it },
+                                    addPlaceholder = "إضافة باركود إضافي للقطعة...",
+                                    onScanAdditional = { activeScannerTarget = "UNIT" },
+                                    onGenerateAdditional = {
+                                        unitBarcode = Product.mergeBarcodeStrings(unitBarcode, generateRandomBarcode("613"))
+                                    },
+                                    tagPrefix = "new_prod_unit_multi_bc"
                                 )
 
                                 // Quick Swap Button between Unit Barcode and Carton Barcode when a barcode is entered/scanned
@@ -1015,16 +1028,18 @@ fun NewPurchaseProductModal(
                                     onValueChange = { cartonBarcode = it },
                                     placeholder = {
                                         Text(
-                                            text = "📦 باركود العبوة الكبرى /\nالكرتونة (اختياري)",
-                                            fontSize = 13.5.sp,
+                                            text = "📦 باركود العبوة الكبرى / الكرتونة (يدعم عدة أكواد)",
+                                            fontSize = 13.sp,
                                             textAlign = TextAlign.End,
-                                            lineHeight = 20.sp,
+                                            lineHeight = 19.sp,
                                             modifier = Modifier.fillMaxWidth()
                                         )
                                     },
                                     leadingIcon = {
                                         IconButton(
-                                            onClick = { cartonBarcode = generateRandomBarcode("619") },
+                                            onClick = {
+                                                cartonBarcode = Product.mergeBarcodeStrings(cartonBarcode, generateRandomBarcode("619"))
+                                            },
                                             modifier = Modifier.testTag("generate_carton_barcode_btn")
                                         ) {
                                             Icon(
@@ -1064,6 +1079,17 @@ fun NewPurchaseProductModal(
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .testTag("new_product_carton_barcode_input")
+                                )
+
+                                MultiBarcodeChipsAndQuickAdder(
+                                    rawBarcodes = cartonBarcode,
+                                    onBarcodesChanged = { cartonBarcode = it },
+                                    addPlaceholder = "إضافة باركود إضافي للكرتونة...",
+                                    onScanAdditional = { activeScannerTarget = "CARTON" },
+                                    onGenerateAdditional = {
+                                        cartonBarcode = Product.mergeBarcodeStrings(cartonBarcode, generateRandomBarcode("619"))
+                                    },
+                                    tagPrefix = "new_prod_carton_multi_bc"
                                 )
                             }
                         }
@@ -1146,12 +1172,12 @@ fun NewPurchaseProductModal(
     // Live Camera Barcode Scanner Modal when user taps the camera icon
     activeScannerTarget?.let { target ->
         SimpleBarcodeCaptureDialog(
-            title = if (target == "UNIT") "مسح باركود القطعة" else "مسح باركود العبوة / الكرتونة",
+            title = if (target == "UNIT") "مسح وإضافة باركود القطعة" else "مسح وإضافة باركود العبوة / الكرتونة",
             onBarcodeScanned = { scannedCode ->
                 if (target == "UNIT") {
-                    unitBarcode = scannedCode
+                    unitBarcode = Product.mergeBarcodeStrings(unitBarcode, scannedCode)
                 } else {
-                    cartonBarcode = scannedCode
+                    cartonBarcode = Product.mergeBarcodeStrings(cartonBarcode, scannedCode)
                 }
                 activeScannerTarget = null
             },
@@ -1782,11 +1808,11 @@ fun UnregisteredBarcodeResolutionCard(
                                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                                 )
                                                 val currentBarcodeInfo = if (linkAsCartonBarcode) {
-                                                    if (prod.cartonBarcode.isBlank()) "باركود الكرتونة: غير محدد"
-                                                    else "باركود الكرتونة الحالي: ${prod.cartonBarcode}"
+                                                    if (prod.cartonBarcodesList.isEmpty()) "باركودات الكرتونة: غير محددة"
+                                                    else "باركودات الكرتونة (${prod.cartonBarcodesList.size}): ${prod.cartonBarcodesList.joinToString(" ، ")}"
                                                 } else {
-                                                    if (prod.barcode.isBlank()) "باركود القطعة: غير محدد"
-                                                    else "باركود القطعة الحالي: ${prod.barcode}"
+                                                    if (prod.unitBarcodesList.isEmpty()) "باركودات القطعة: غير محددة"
+                                                    else "باركودات القطعة (${prod.unitBarcodesList.size}): ${prod.unitBarcodesList.joinToString(" ، ")}"
                                                 }
                                                 Text(
                                                     text = currentBarcodeInfo,
@@ -1818,7 +1844,7 @@ fun UnregisteredBarcodeResolutionCard(
                                                 )
                                                 Spacer(modifier = Modifier.width(4.dp))
                                                 Text(
-                                                    text = "ربط + للفاتورة",
+                                                    text = "+ إضافة باركود",
                                                     fontWeight = FontWeight.ExtraBold,
                                                     fontSize = 11.5.sp
                                                 )
@@ -1906,3 +1932,190 @@ fun UnregisteredBarcodeActionDialog(
         }
     }
 }
+
+@Composable
+fun MultiBarcodeChipsAndQuickAdder(
+    rawBarcodes: String,
+    onBarcodesChanged: (String) -> Unit,
+    addPlaceholder: String = "إضافة باركود آخر...",
+    onScanAdditional: (() -> Unit)? = null,
+    onGenerateAdditional: (() -> Unit)? = null,
+    tagPrefix: String = "multi_bc"
+) {
+    val codes = remember(rawBarcodes) { Product.parseBarcodes(rawBarcodes) }
+    var quickAddText by remember { mutableStateOf("") }
+    val primaryBlue = Color(0xFF1976D2)
+
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        if (codes.isNotEmpty()) {
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.28f),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 10.dp, vertical = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "الأكواد المسجلة (${codes.size}):",
+                            fontSize = 11.5.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        if (codes.size > 1) {
+                            Text(
+                                text = "متعدد الباركود ✓",
+                                fontSize = 10.5.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF10B981)
+                            )
+                        }
+                    }
+
+                    codes.forEachIndexed { index, code ->
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = MaterialTheme.colorScheme.surface,
+                            border = BorderStroke(0.8.dp, MaterialTheme.colorScheme.outlineVariant),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 8.dp, vertical = 4.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Surface(
+                                        shape = RoundedCornerShape(6.dp),
+                                        color = if (index == 0) primaryBlue.copy(alpha = 0.14f) else Color(0xFF10B981).copy(alpha = 0.14f)
+                                    ) {
+                                        Text(
+                                            text = if (index == 0) "#1 أساسي" else "#${index + 1} إضافي",
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.ExtraBold,
+                                            color = if (index == 0) primaryBlue else Color(0xFF10B981),
+                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                        )
+                                    }
+                                    Text(
+                                        text = code,
+                                        fontSize = 12.5.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        fontFamily = FontFamily.Monospace,
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+
+                                IconButton(
+                                    onClick = {
+                                        val remaining = codes.filterIndexed { i, _ -> i != index }
+                                        onBarcodesChanged(Product.joinBarcodes(remaining))
+                                    },
+                                    modifier = Modifier
+                                        .size(28.dp)
+                                        .testTag("${tagPrefix}_remove_$index")
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Close,
+                                        contentDescription = "حذف الباركود $code",
+                                        tint = MaterialTheme.colorScheme.error,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Row to quickly append an additional barcode
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            OutlinedTextField(
+                value = quickAddText,
+                onValueChange = { quickAddText = it },
+                placeholder = {
+                    Text(
+                        text = addPlaceholder,
+                        fontSize = 11.5.sp
+                    )
+                },
+                singleLine = true,
+                shape = RoundedCornerShape(10.dp),
+                textStyle = TextStyle(fontSize = 12.5.sp, fontWeight = FontWeight.Bold),
+                modifier = Modifier
+                    .weight(1f)
+                    .testTag("${tagPrefix}_quick_input")
+            )
+
+            Button(
+                onClick = {
+                    val clean = quickAddText.trim()
+                    if (clean.isNotEmpty()) {
+                        onBarcodesChanged(Product.mergeBarcodeStrings(rawBarcodes, clean))
+                        quickAddText = ""
+                    } else if (onGenerateAdditional != null) {
+                        onGenerateAdditional()
+                    }
+                },
+                shape = RoundedCornerShape(10.dp),
+                modifier = Modifier
+                    .height(48.dp)
+                    .testTag("${tagPrefix}_add_btn")
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Add,
+                    contentDescription = "إضافة باركود",
+                    modifier = Modifier.size(16.dp)
+                )
+                Spacer(modifier = Modifier.width(3.dp))
+                Text(
+                    text = "إضافة",
+                    fontSize = 11.5.sp,
+                    fontWeight = FontWeight.ExtraBold
+                )
+            }
+
+            if (onScanAdditional != null) {
+                OutlinedButton(
+                    onClick = onScanAdditional,
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier
+                        .height(48.dp)
+                        .testTag("${tagPrefix}_scan_add_btn")
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.PhotoCamera,
+                        contentDescription = "مسح باركود إضافي بالكاميرا",
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+            }
+        }
+    }
+}
+

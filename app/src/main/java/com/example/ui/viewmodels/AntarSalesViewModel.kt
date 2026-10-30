@@ -205,10 +205,14 @@ class AntarSalesViewModel(
     // In-memory O(1) Fast Lookup Maps for Ultra-Fast Barcode Scanning & Instant POS Lookups
     val productByBarcodeMap: StateFlow<Map<String, Product>> = products
         .map { list ->
-            val map = HashMap<String, Product>(list.size * 2)
+            val map = HashMap<String, Product>(list.size * 3)
             list.forEach { p ->
-                if (p.barcode.isNotBlank()) map[p.barcode.trim().lowercase()] = p
-                if (p.cartonBarcode.isNotBlank()) map[p.cartonBarcode.trim().lowercase()] = p
+                p.unitBarcodesList.forEach { code ->
+                    map[code.trim().lowercase()] = p
+                }
+                p.cartonBarcodesList.forEach { code ->
+                    map[code.trim().lowercase()] = p
+                }
             }
             map
         }
@@ -1987,7 +1991,7 @@ class AntarSalesViewModel(
         val lowerCode = code.lowercase()
         val inMemoryMatch = productByBarcodeMap.value[lowerCode]
         if (inMemoryMatch != null) {
-            val isCartonScan = inMemoryMatch.cartonBarcode.isNotBlank() && inMemoryMatch.cartonBarcode.equals(code, ignoreCase = true)
+            val isCartonScan = inMemoryMatch.matchesCartonBarcode(code)
             val addedUnits = if (isCartonScan) inMemoryMatch.unitsPerCarton.coerceAtLeast(1) else 1
             addToCart(inMemoryMatch, asCarton = isCartonScan)
             _lastScannedPosEvent.value = LastScannedPosEvent(
@@ -2011,7 +2015,7 @@ class AntarSalesViewModel(
                 repository.findProductByBarcode(code)
             }
             if (found != null) {
-                val isCartonScan = found.cartonBarcode.isNotBlank() && found.cartonBarcode.equals(code, ignoreCase = true)
+                val isCartonScan = found.matchesCartonBarcode(code)
                 val addedUnits = if (isCartonScan) found.unitsPerCarton.coerceAtLeast(1) else 1
                 addToCart(found, asCarton = isCartonScan)
                 _lastScannedPosEvent.value = LastScannedPosEvent(
@@ -2044,7 +2048,7 @@ class AntarSalesViewModel(
         if (code.isEmpty()) return false
         val found = productByBarcodeMap.value[code.lowercase()]
         return if (found != null) {
-            val isCartonScan = found.cartonBarcode.isNotBlank() && found.cartonBarcode.equals(code, ignoreCase = true)
+            val isCartonScan = found.matchesCartonBarcode(code)
             val addedUnits = if (isCartonScan) found.unitsPerCarton.coerceAtLeast(1) else 1
             addToCart(found, asCarton = isCartonScan)
             _lastScannedPosEvent.value = LastScannedPosEvent(
@@ -2089,19 +2093,19 @@ class AntarSalesViewModel(
         if (cleanCode.isEmpty()) return
         viewModelScope.launch {
             val updatedProduct = if (asCartonBarcode) {
-                product.copy(cartonBarcode = cleanCode)
+                product.withAddedCartonBarcode(cleanCode)
             } else {
-                product.copy(barcode = cleanCode)
+                product.withAddedUnitBarcode(cleanCode)
             }
             repository.saveProduct(updatedProduct)
             launch(Dispatchers.IO) {
                 liveInventorySyncManager.pushProductToCloud(updatedProduct, activeStaffAccount)
             }
-            val barcodeTypeLabel = if (asCartonBarcode) "باركود كرتونة/عبوة" else "باركود قطعة فردية"
+            val barcodeTypeLabel = if (asCartonBarcode) "باركود كرتونة/عبوة إضافي" else "باركود قطعة إضافي"
             repository.logActivity(
                 user = _currentUser.value,
                 actionType = "BARCODE_LINKED",
-                description = "ربط $barcodeTypeLabel ($cleanCode) بالسلعة: ${product.name}"
+                description = "إضافة وربط $barcodeTypeLabel ($cleanCode) بالسلعة: ${product.name}"
             )
             _unregisteredScannedBarcode.value = null
             if (addToCartImmediately) {
@@ -2540,6 +2544,97 @@ class AntarSalesViewModel(
         }
     }
 
+    /**
+     * اعتماد نتائج الجرد الفعلي السريع (الجرد الفعلي مقابل المسجل) وتحديث المخزون ومزامنته مع العمال.
+     */
+    fun applyStockAuditAdjustments(
+        adjustments: Map<Int, Int>,
+        auditNote: String = "جرد فعلي سريع"
+    ) {
+        if (adjustments.isEmpty()) return
+        viewModelScope.launch {
+            val now = System.currentTimeMillis()
+            val allCurrent = products.value.associateBy { it.id }
+            val updatedList = mutableListOf<Product>()
+            var shortageCount = 0
+            var surplusCount = 0
+
+            for ((productId, actualStockRaw) in adjustments) {
+                val prod = allCurrent[productId] ?: continue
+                val actualStock = actualStockRaw.coerceAtLeast(0)
+                val diff = actualStock - prod.stock
+                if (diff < 0) shortageCount++ else if (diff > 0) surplusCount++
+                val diffLabel = when {
+                    diff > 0 -> "فائض +$diff"
+                    diff < 0 -> "عجز $diff"
+                    else -> "مطابق (0)"
+                }
+                val updatedProd = prod.copy(
+                    stock = actualStock,
+                    updatedAt = now,
+                    syncStatus = RecordSyncState.PENDING
+                )
+                repository.saveProduct(updatedProd)
+                updatedList.add(updatedProd)
+                repository.logActivity(
+                    user = _currentUser.value,
+                    actionType = "STOCK_AUDIT",
+                    description = "جرد فعلي للصنف (${prod.name}): المسجل (${prod.stock} ق) ← الفعلي ($actualStock ق) • الفرق: $diffLabel${if (auditNote.isNotBlank()) " ($auditNote)" else ""}",
+                    metadata = "productId=${prod.id};oldStock=${prod.stock};newStock=$actualStock;diff=$diff"
+                )
+            }
+
+            if (updatedList.isNotEmpty()) {
+                _cartItems.value = _cartItems.value.map { item ->
+                    val updatedMatch = updatedList.find { it.id == item.product.id }
+                    if (updatedMatch != null) item.copy(product = updatedMatch) else item
+                }
+                launch(Dispatchers.IO) {
+                    updatedList.forEach { updatedProd ->
+                        liveInventorySyncManager.pushProductToCloud(updatedProd, activeStaffAccount)
+                    }
+                }
+                showStatusMessage("تم اعتماد الجرد الفعلي لـ ${updatedList.size} صنف (فائض: $surplusCount | عجز: $shortageCount) ومزامنة المخزون ✅")
+            }
+        }
+    }
+
+    /**
+     * تطبيق تخفيض سريع على سلعة راكدة لتنشيط مبيعاتها ومزامنة السعر الجديد فوراً مع الكاشير والعمال.
+     */
+    fun applyStagnantProductDiscount(
+        product: Product,
+        newSellingPrice: Double,
+        discountLabel: String = ""
+    ) {
+        val safePrice = newSellingPrice.coerceAtLeast(0.0)
+        if (safePrice <= 0.0) return
+        viewModelScope.launch {
+            val now = System.currentTimeMillis()
+            val oldPrice = product.price
+            val updatedProd = product.copy(
+                price = safePrice,
+                updatedAt = now,
+                syncStatus = RecordSyncState.PENDING
+            )
+            repository.saveProduct(updatedProd)
+            _cartItems.value = _cartItems.value.map { item ->
+                if (item.product.id == product.id) item.copy(product = updatedProd) else item
+            }
+            val labelPart = if (discountLabel.isNotBlank()) " ($discountLabel)" else ""
+            repository.logActivity(
+                user = _currentUser.value,
+                actionType = "STAGNANT_DISCOUNT",
+                description = "تخفيض سعر سلعة راكدة (${product.name})$labelPart: من $oldPrice إلى $safePrice ${_currencySymbol.value}",
+                metadata = "productId=${product.id};oldPrice=$oldPrice;newPrice=$safePrice"
+            )
+            launch(Dispatchers.IO) {
+                liveInventorySyncManager.pushProductToCloud(updatedProd, activeStaffAccount)
+            }
+            showStatusMessage("تم تطبيق التخفيض على (${product.name}) ليصبح السعر $safePrice ${_currencySymbol.value} ومزامنته ✅")
+        }
+    }
+
     // Customers & Debts
     fun saveCustomer(customer: Customer) {
         viewModelScope.launch {
@@ -2721,7 +2816,7 @@ class AntarSalesViewModel(
                 for (it in items) {
                     val matching = currentProds.values.find { p ->
                         (it.productId != null && it.productId > 0 && p.id == it.productId) ||
-                        (it.barcode.isNotBlank() && (p.barcode == it.barcode || p.cartonBarcode == it.barcode)) ||
+                        (it.barcode.isNotBlank() && p.matchesAnyBarcode(it.barcode)) ||
                         p.name.equals(it.productName, ignoreCase = true)
                     }
                     if (matching != null) {
@@ -4164,9 +4259,12 @@ class AntarSalesViewModel(
             try {
                 val updatedAccount = account.copy(
                     isTrial = false,
+                    trialEndsAtMillis = 0L,
                     isApprovedByOwner = true,
                     approvalStatus = StaffApprovalStatus.APPROVED,
-                    approvedByUid = _currentUser.value?.id?.toString() ?: "owner_1",
+                    role = "manager",
+                    requestedRole = "manager",
+                    approvedByUid = _currentUser.value?.id?.toString() ?: "owner_deffas_antar",
                     approvedByName = StaffAccountRepository.OWNER_FULL_NAME
                 )
 
@@ -4180,6 +4278,7 @@ class AntarSalesViewModel(
                     repository.saveUser(
                         match.copy(
                             isTrial = false,
+                            trialEndsAt = 0L,
                             isApprovedByOwner = true,
                             isActive = true,
                             status = "ACTIVE"
@@ -4193,7 +4292,7 @@ class AntarSalesViewModel(
                     description = "قام المالك بتفعيل حساب المدير نهائياً: ${account.fullName} - متجر: ${account.branchName}"
                 )
 
-                showStatusMessage("تم تفعيل حساب المدير (${account.fullName}) بشكل دائم بنجاح ✓")
+                showStatusMessage("تم السماح للمدير (${account.fullName}) وتفعيل حسابه بشكل دائم بنجاح ✓")
                 onComplete(true)
             } catch (e: Exception) {
                 showStatusMessage("خطأ في التفعيل: ${e.message}")
@@ -4211,14 +4310,23 @@ class AntarSalesViewModel(
     ) {
         viewModelScope.launch {
             try {
-                val sevenDaysMs = 7 * 24 * 3600 * 1000L
-                val currentTrialEnds = if (account.trialEndsAtMillis > System.currentTimeMillis()) account.trialEndsAtMillis else System.currentTimeMillis()
+                val sevenDaysMs = 7L * 24L * 3600L * 1000L
+                val currentTrialEnds = if (account.trialEndsAtMillis > System.currentTimeMillis() && !account.isPending) {
+                    account.trialEndsAtMillis
+                } else {
+                    System.currentTimeMillis()
+                }
                 val newTrialEnds = currentTrialEnds + sevenDaysMs
 
                 val updatedAccount = account.copy(
                     isTrial = true,
                     trialEndsAtMillis = newTrialEnds,
-                    isApprovedByOwner = false
+                    isApprovedByOwner = false,
+                    approvalStatus = StaffApprovalStatus.APPROVED,
+                    role = "manager",
+                    requestedRole = "manager",
+                    approvedByUid = _currentUser.value?.id?.toString() ?: "owner_deffas_antar",
+                    approvedByName = StaffAccountRepository.OWNER_FULL_NAME
                 )
 
                 StaffAccountRepository.saveAccountToLocalRegistry(getApplication(), updatedAccount)

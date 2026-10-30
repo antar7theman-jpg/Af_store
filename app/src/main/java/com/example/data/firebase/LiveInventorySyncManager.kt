@@ -55,8 +55,8 @@ class LiveInventorySyncManager(
         fun getInventoryDocId(product: Product): String {
             return when {
                 product.firestoreId.isNotBlank() && product.firestoreId.matches(Regex("^[a-zA-Z0-9_\\-]+$")) -> product.firestoreId
-                product.barcode.isNotBlank() -> "bc_${product.barcode.trim().replace(Regex("[^a-zA-Z0-9_\\-]"), "_")}"
-                product.cartonBarcode.isNotBlank() -> "cbc_${product.cartonBarcode.trim().replace(Regex("[^a-zA-Z0-9_\\-]"), "_")}"
+                product.primaryBarcode.isNotBlank() -> "bc_${product.primaryBarcode.trim().replace(Regex("[^a-zA-Z0-9_\\-]"), "_")}"
+                product.primaryCartonBarcode.isNotBlank() -> "cbc_${product.primaryCartonBarcode.trim().replace(Regex("[^a-zA-Z0-9_\\-]"), "_")}"
                 product.name.isNotBlank() -> {
                     val normalizedName = product.name.trim().lowercase().replace(Regex("\\s+"), " ")
                     val asciiPart = normalizedName.replace(Regex("[^a-z0-9]"), "_").trim('_').take(32)

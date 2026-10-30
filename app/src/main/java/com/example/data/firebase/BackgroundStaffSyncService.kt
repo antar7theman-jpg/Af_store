@@ -52,7 +52,24 @@ class BackgroundStaffSyncService(
                         return@collect
                     }
 
-                    // 1. Prioritize Server-Side Authorization: Check active account status
+                    // 1. Prioritize Server-Side Authorization: Check active account status & 7-day trial expiration
+                    if (!activeAccount.isOwner && (cloudAccount.isTrialExpired || (!cloudAccount.isApproved && cloudAccount.isTrial))) {
+                        Log.w("BackgroundStaffSync", "7-day trial expired for ${cloudAccount.fullName}. Terminating session automatically.")
+                        StaffAccountRepository.recordTrialExpiredSession(context, cloudAccount.fullName)
+                        StaffAccountRepository.clearPersistentStaffSession(context)
+                        val suspendedTrial = cloudAccount.copy(
+                            approvalStatus = StaffApprovalStatus.SUSPENDED,
+                            isApprovedByOwner = false,
+                            activeDeviceId = "",
+                            activeDeviceName = "",
+                            activeSessionToken = ""
+                        )
+                        StaffAccountRepository.saveAccountToLocalRegistry(context, suspendedTrial)
+                        runCatching { repository.expireTrialAccountAutomatically(cloudAccount) }
+                        onEvent(SyncEvent.AccountDeactivated("⛔ انتهت مدة التجربة (7 أيام) وتم إنهاء الجلسة تلقائياً. لا يمكن الدخول إلا بعد سماح المالك (Deffas antar)."))
+                        return@collect
+                    }
+
                     if (!cloudAccount.isApproved && !activeAccount.isOwner) {
                         Log.w("BackgroundStaffSync", "Server revoked approval (${cloudAccount.approvalStatus}). Terminating session.")
                         StaffAccountRepository.clearPersistentStaffSession(context)

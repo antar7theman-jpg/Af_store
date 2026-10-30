@@ -159,8 +159,99 @@ data class Product(
     val cartonPurchasePrice: Double
         get() = purchasePrice * unitsPerCarton.coerceAtLeast(1)
 
+    @get:com.google.firebase.firestore.Exclude
     val resolvedImage: String
         get() = imageUrl.ifBlank { imagePath }
+
+    @get:com.google.firebase.firestore.Exclude
+    val unitBarcodesList: List<String>
+        get() = parseBarcodes(barcode)
+
+    @get:com.google.firebase.firestore.Exclude
+    val cartonBarcodesList: List<String>
+        get() = parseBarcodes(cartonBarcode)
+
+    @get:com.google.firebase.firestore.Exclude
+    val allBarcodesList: List<String>
+        get() = (unitBarcodesList + cartonBarcodesList).distinct()
+
+    @get:com.google.firebase.firestore.Exclude
+    val primaryBarcode: String
+        get() = unitBarcodesList.firstOrNull() ?: barcode.trim()
+
+    @get:com.google.firebase.firestore.Exclude
+    val primaryCartonBarcode: String
+        get() = cartonBarcodesList.firstOrNull() ?: cartonBarcode.trim()
+
+    @get:com.google.firebase.firestore.Exclude
+    val totalBarcodesCount: Int
+        get() = allBarcodesList.size
+
+    fun matchesUnitBarcode(code: String): Boolean {
+        val clean = code.trim()
+        if (clean.isEmpty()) return false
+        return unitBarcodesList.any { it.equals(clean, ignoreCase = true) }
+    }
+
+    fun matchesCartonBarcode(code: String): Boolean {
+        val clean = code.trim()
+        if (clean.isEmpty()) return false
+        return cartonBarcodesList.any { it.equals(clean, ignoreCase = true) }
+    }
+
+    fun matchesAnyBarcode(code: String): Boolean {
+        return matchesUnitBarcode(code) || matchesCartonBarcode(code)
+    }
+
+    fun withAddedUnitBarcode(newCode: String): Product {
+        val addedList = parseBarcodes(newCode)
+        if (addedList.isEmpty()) return this
+        val updatedUnits = (unitBarcodesList + addedList).distinctBy { it.lowercase() }
+        val updatedCartons = cartonBarcodesList.filterNot { c ->
+            addedList.any { it.equals(c, ignoreCase = true) }
+        }
+        return copy(
+            barcode = joinBarcodes(updatedUnits),
+            cartonBarcode = joinBarcodes(updatedCartons)
+        )
+    }
+
+    fun withAddedCartonBarcode(newCode: String): Product {
+        val addedList = parseBarcodes(newCode)
+        if (addedList.isEmpty()) return this
+        val updatedCartons = (cartonBarcodesList + addedList).distinctBy { it.lowercase() }
+        val updatedUnits = unitBarcodesList.filterNot { u ->
+            addedList.any { it.equals(u, ignoreCase = true) }
+        }
+        return copy(
+            barcode = joinBarcodes(updatedUnits),
+            cartonBarcode = joinBarcodes(updatedCartons)
+        )
+    }
+
+    companion object {
+        private val BARCODE_SPLIT_REGEX = Regex("[,|;\\n\\r\\s]+")
+
+        fun parseBarcodes(raw: String): List<String> {
+            if (raw.isBlank()) return emptyList()
+            return raw.split(BARCODE_SPLIT_REGEX)
+                .map { it.trim() }
+                .filter { it.isNotEmpty() }
+                .distinctBy { it.lowercase() }
+        }
+
+        fun joinBarcodes(codes: List<String>): String {
+            return codes
+                .map { it.trim() }
+                .filter { it.isNotEmpty() }
+                .distinctBy { it.lowercase() }
+                .joinToString(",")
+        }
+
+        fun mergeBarcodeStrings(primary: String, secondary: String): String {
+            return joinBarcodes(parseBarcodes(primary) + parseBarcodes(secondary))
+        }
+    }
 }
 
 @Immutable

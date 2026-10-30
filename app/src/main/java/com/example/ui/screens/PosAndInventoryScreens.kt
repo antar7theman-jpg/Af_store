@@ -2527,6 +2527,12 @@ fun InventoryScreen(
     var showInventoryAuditDialog by remember { mutableStateOf(false) }
     var showInventoryPdfReportDialog by remember { mutableStateOf(false) }
     var showInventoryCsvExportDialog by remember { mutableStateOf(false) }
+    var showQuickStockAuditModal by remember { mutableStateOf(false) }
+    var showStagnantProductsModal by remember { mutableStateOf(false) }
+    val allSalesForStagnant by viewModel.sales.collectAsState()
+    val stagnantProducts30Days = remember(products, allSalesForStagnant) {
+        computeStagnantProductsList(products = products, sales = allSalesForStagnant, thresholdDays = 30)
+    }
     var editingProduct by remember { mutableStateOf<Product?>(null) }
     var showProductDialog by remember { mutableStateOf(false) }
     var selectedProductForImagePreview by remember { mutableStateOf<Product?>(null) }
@@ -2695,8 +2701,7 @@ fun InventoryScreen(
                         val code = searchQuery.trim()
                         if (code.isNotEmpty()) {
                             val found = products.find {
-                                it.barcode.equals(code, ignoreCase = true) ||
-                                    (it.cartonBarcode.isNotBlank() && it.cartonBarcode.equals(code, ignoreCase = true))
+                                it.matchesAnyBarcode(code)
                             }
                             if (found == null) {
                                 searchQuery = ""
@@ -2780,6 +2785,56 @@ fun InventoryScreen(
                     },
                     modifier = Modifier.testTag("filter_low_stock_chip")
                 )
+
+                Surface(
+                    onClick = {
+                        focusManager.clearFocus()
+                        keyboardController?.hide()
+                        showQuickStockAuditModal = true
+                    },
+                    shape = RoundedCornerShape(10.dp),
+                    color = Color(0xFF10B981).copy(alpha = 0.14f),
+                    border = BorderStroke(1.dp, Color(0xFF10B981).copy(alpha = 0.65f)),
+                    modifier = Modifier.testTag("inventory_quick_stock_audit_btn")
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Text(
+                            text = "📋 الجرد السريع (الفعلي مقابل المسجل)",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = Color(0xFF10B981)
+                        )
+                    }
+                }
+
+                Surface(
+                    onClick = {
+                        focusManager.clearFocus()
+                        keyboardController?.hide()
+                        showStagnantProductsModal = true
+                    },
+                    shape = RoundedCornerShape(10.dp),
+                    color = semantic.debtAmber.copy(alpha = 0.16f),
+                    border = BorderStroke(1.dp, semantic.debtAmber.copy(alpha = 0.65f)),
+                    modifier = Modifier.testTag("inventory_stagnant_products_btn")
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Text(
+                            text = "⏳ السلع الراكدة (${stagnantProducts30Days.size})",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = semantic.debtAmber
+                        )
+                    }
+                }
             }
 
             if (isWideScreen) {
@@ -2844,6 +2899,16 @@ fun InventoryScreen(
                                         fontWeight = if (isLow) FontWeight.Bold else FontWeight.Normal,
                                         color = if (isLow) Color(0xFFEF4444) else MaterialTheme.colorScheme.onSurfaceVariant
                                     )
+                                    if (product.totalBarcodesCount > 0) {
+                                        Text(
+                                            text = "🏷️ الباركود (${product.totalBarcodesCount}): ${product.allBarcodesList.joinToString(" ، ")}",
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = MaterialTheme.colorScheme.primary,
+                                            maxLines = 2,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
                                 }
 
                                 Row(
@@ -3004,6 +3069,16 @@ fun InventoryScreen(
                                         fontWeight = if (isLow) FontWeight.Bold else FontWeight.Normal,
                                         color = if (isLow) Color(0xFFEF4444) else MaterialTheme.colorScheme.onSurfaceVariant
                                     )
+                                    if (product.totalBarcodesCount > 0) {
+                                        Text(
+                                            text = "🏷️ الباركود (${product.totalBarcodesCount}): ${product.allBarcodesList.joinToString(" ، ")}",
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = MaterialTheme.colorScheme.primary,
+                                            maxLines = 2,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
                                 }
 
                                 Row(
@@ -3154,8 +3229,7 @@ fun InventoryScreen(
                 val code = scannedCode.trim()
                 if (code.isNotEmpty()) {
                     val found = products.find {
-                        it.barcode.equals(code, ignoreCase = true) ||
-                            (it.cartonBarcode.isNotBlank() && it.cartonBarcode.equals(code, ignoreCase = true))
+                        it.matchesAnyBarcode(code)
                     }
                     if (found != null) {
                         searchQuery = code
@@ -3180,18 +3254,19 @@ fun InventoryScreen(
                         p.name.contains(extracted.productName, ignoreCase = true) ||
                         extracted.productName.contains(p.name, ignoreCase = true)
                     )) || (
-                        extracted.barcode.isNotBlank() && (
-                            p.barcode.equals(extracted.barcode, ignoreCase = true) ||
-                            p.cartonBarcode.equals(extracted.barcode, ignoreCase = true)
-                        )
+                        extracted.barcode.isNotBlank() && p.matchesAnyBarcode(extracted.barcode)
                     )
                 }
                 if (matched != null) {
-                    val updated = matched.copy(
+                    val baseUpdated = matched.copy(
                         price = if (extracted.price > 0.0) extracted.price else matched.price,
-                        purchasePrice = if (extracted.price > 0.0 && matched.purchasePrice <= 0.0) extracted.price else matched.purchasePrice,
-                        barcode = if (extracted.barcode.isNotBlank() && matched.barcode.isBlank()) extracted.barcode else matched.barcode
+                        purchasePrice = if (extracted.price > 0.0 && matched.purchasePrice <= 0.0) extracted.price else matched.purchasePrice
                     )
+                    val updated = if (extracted.barcode.isNotBlank()) {
+                        baseUpdated.withAddedUnitBarcode(extracted.barcode)
+                    } else {
+                        baseUpdated
+                    }
                     viewModel.saveProduct(updated)
                 } else {
                     editingProduct = Product(
@@ -3309,6 +3384,34 @@ fun InventoryScreen(
             products = filtered.ifEmpty { products },
             storeName = storeName,
             onDismiss = { showInventoryCsvExportDialog = false }
+        )
+    }
+
+    if (showQuickStockAuditModal) {
+        QuickStockAuditModal(
+            products = products,
+            currencySymbol = currencySymbol,
+            canViewCostPrices = canViewCostPrices,
+            onApplyAuditAdjustments = { adjustments, auditNote ->
+                viewModel.applyStockAuditAdjustments(adjustments, auditNote)
+            },
+            onPromptUnregisteredBarcode = { code ->
+                viewModel.promptUnregisteredBarcode(code)
+            },
+            onDismiss = { showQuickStockAuditModal = false }
+        )
+    }
+
+    if (showStagnantProductsModal) {
+        StagnantProductsModal(
+            products = products,
+            sales = allSalesForStagnant,
+            currencySymbol = currencySymbol,
+            canViewCostPrices = canViewCostPrices,
+            onApplyDiscountPrice = { product, newPrice, discountLabel ->
+                viewModel.applyStagnantProductDiscount(product, newPrice, discountLabel)
+            },
+            onDismiss = { showStagnantProductsModal = false }
         )
     }
 }
@@ -3730,6 +3833,7 @@ fun ProductEditorDialog(
     var barcode by remember { mutableStateOf(initialProduct?.barcode ?: "") }
     var cartonBarcode by remember { mutableStateOf(initialProduct?.cartonBarcode ?: "") }
     var imagePath by remember { mutableStateOf(initialProduct?.imagePath ?: "") }
+    var activeEditorScannerTarget by remember { mutableStateOf<String?>(null) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -3802,16 +3906,30 @@ fun ProductEditorDialog(
                 OutlinedTextField(
                     value = barcode,
                     onValueChange = { barcode = it },
-                    label = { Text("باركود القطعة") },
+                    label = { Text("باركود القطعة (يدعم عدة باركودات مفصولة بفاصلة ,)") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
+                )
+                MultiBarcodeChipsAndQuickAdder(
+                    rawBarcodes = barcode,
+                    onBarcodesChanged = { barcode = it },
+                    addPlaceholder = "إضافة باركود آخر للقطعة...",
+                    onScanAdditional = { activeEditorScannerTarget = "UNIT" },
+                    tagPrefix = "editor_unit_multi_bc"
                 )
                 OutlinedTextField(
                     value = cartonBarcode,
                     onValueChange = { cartonBarcode = it },
-                    label = { Text("باركود الكرتونة (اختياري)") },
+                    label = { Text("باركود الكرتونة (اختياري • يدعم عدة باركودات)") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
+                )
+                MultiBarcodeChipsAndQuickAdder(
+                    rawBarcodes = cartonBarcode,
+                    onBarcodesChanged = { cartonBarcode = it },
+                    addPlaceholder = "إضافة باركود آخر للكرتونة...",
+                    onScanAdditional = { activeEditorScannerTarget = "CARTON" },
+                    tagPrefix = "editor_carton_multi_bc"
                 )
             }
         },
@@ -3822,14 +3940,16 @@ fun ProductEditorDialog(
                         onSave(
                             Product(
                                 id = initialProduct?.id ?: 0,
+                                firestoreId = initialProduct?.firestoreId ?: "",
                                 name = name.trim(),
                                 purchasePrice = purchasePrice.toDoubleOrNull() ?: 0.0,
                                 price = price.toDoubleOrNull() ?: 0.0,
                                 stock = stock.toIntOrNull() ?: 0,
                                 unitsPerCarton = (unitsPerCarton.toIntOrNull() ?: 1).coerceAtLeast(1),
-                                barcode = barcode.trim(),
-                                cartonBarcode = cartonBarcode.trim(),
-                                imagePath = imagePath.trim()
+                                barcode = Product.joinBarcodes(Product.parseBarcodes(barcode)),
+                                cartonBarcode = Product.joinBarcodes(Product.parseBarcodes(cartonBarcode)),
+                                imagePath = imagePath.trim(),
+                                imageUrl = initialProduct?.imageUrl ?: ""
                             ),
                             customMinStock.trim().toIntOrNull()
                         )
@@ -3845,6 +3965,21 @@ fun ProductEditorDialog(
             }
         }
     )
+
+    activeEditorScannerTarget?.let { target ->
+        SimpleBarcodeCaptureDialog(
+            title = if (target == "UNIT") "مسح وإضافة باركود للقطعة" else "مسح وإضافة باركود للكرتونة",
+            onBarcodeScanned = { scannedCode ->
+                if (target == "UNIT") {
+                    barcode = Product.mergeBarcodeStrings(barcode, scannedCode)
+                } else {
+                    cartonBarcode = Product.mergeBarcodeStrings(cartonBarcode, scannedCode)
+                }
+                activeEditorScannerTarget = null
+            },
+            onDismiss = { activeEditorScannerTarget = null }
+        )
+    }
 }
 
 @Composable

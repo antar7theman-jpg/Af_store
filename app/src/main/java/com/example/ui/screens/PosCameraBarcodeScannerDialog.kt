@@ -117,12 +117,11 @@ fun PosCameraBarcodeScannerDialog(
         val code = rawCode.trim()
         if (code.isEmpty()) return
         val found = products.find {
-            it.barcode.equals(code, ignoreCase = true) ||
-                (it.cartonBarcode.isNotBlank() && it.cartonBarcode.equals(code, ignoreCase = true))
+            it.matchesAnyBarcode(code)
         }
 
         if (found != null) {
-            val cartonScan = found.cartonBarcode.isNotBlank() && found.cartonBarcode.equals(code, ignoreCase = true)
+            val cartonScan = found.matchesCartonBarcode(code)
             val unitsToAdd = if (cartonScan) found.unitsPerCarton.coerceAtLeast(1) else 1
 
             BarcodeFeedbackController.triggerScanSuccessFeedback(

@@ -226,7 +226,12 @@ class AntarRepository(private val dao: StoreDao) {
     suspend fun softDeleteProduct(productId: Int) =
         dao.softDeleteProductOfflineAtomically(productId)
 
-    suspend fun findProductByBarcode(barcode: String): Product? = dao.getProductByBarcode(barcode)
+    suspend fun findProductByBarcode(barcode: String): Product? {
+        val clean = barcode.trim()
+        if (clean.isEmpty()) return null
+        dao.getProductByBarcode(clean)?.let { return it }
+        return dao.getAllProductsOnce().firstOrNull { !it.isDeleted && it.matchesAnyBarcode(clean) }
+    }
 
     // Offline-First Local Sales Operations
     suspend fun saveSale(sale: Sale): Long {
@@ -442,7 +447,7 @@ class AntarRepository(private val dao: StoreDao) {
         items.forEach { item ->
             val addedUnits = if (item.isCarton) item.quantity * item.unitsPerCarton.coerceAtLeast(1) else item.quantity
             val existing = item.productId?.let { dao.getProductById(it) }
-                ?: if (item.barcode.isNotBlank()) dao.getProductByBarcode(item.barcode) else null
+                ?: if (item.barcode.isNotBlank()) findProductByBarcode(item.barcode) else null
 
             val unitPurchaseCost = if (item.isCarton && item.unitsPerCarton > 1) {
                 item.unitCost / item.unitsPerCarton
@@ -456,6 +461,8 @@ class AntarRepository(private val dao: StoreDao) {
                         stock = existing.stock + addedUnits,
                         purchasePrice = if (unitPurchaseCost > 0) unitPurchaseCost else existing.purchasePrice,
                         price = if (item.sellingPrice > 0) item.sellingPrice else existing.price,
+                        barcode = Product.mergeBarcodeStrings(existing.barcode, item.barcode),
+                        cartonBarcode = Product.mergeBarcodeStrings(existing.cartonBarcode, item.cartonBarcode),
                         imagePath = if (item.imagePath.isNotBlank()) item.imagePath else existing.imagePath,
                         isDeleted = false,
                         updatedAt = now,
@@ -599,21 +606,25 @@ class AntarRepository(private val dao: StoreDao) {
         val allLocal = dao.getAllProductsOnce()
         val localById = allLocal.associateBy { it.id }.toMutableMap()
         val localByFirestoreId = allLocal.filter { it.firestoreId.isNotBlank() }.associateBy { it.firestoreId }.toMutableMap()
-        val localByBarcode = allLocal.filter { it.barcode.isNotBlank() }.associateBy { it.barcode.trim().lowercase() }.toMutableMap()
-        val localByCartonBarcode = allLocal.filter { it.cartonBarcode.isNotBlank() }.associateBy { it.cartonBarcode.trim().lowercase() }.toMutableMap()
+        val localByBarcode = mutableMapOf<String, Product>()
+        val localByCartonBarcode = mutableMapOf<String, Product>()
+        allLocal.forEach { prod ->
+            prod.unitBarcodesList.forEach { code -> localByBarcode[code.lowercase()] = prod }
+            prod.cartonBarcodesList.forEach { code -> localByCartonBarcode[code.lowercase()] = prod }
+        }
         val localByName = allLocal.filter { it.name.isNotBlank() }.associateBy { it.name.trim().lowercase() }.toMutableMap()
         val toSave = mutableListOf<Product>()
 
         for (remote in remoteProducts) {
             val remoteFsId = remote.firestoreId.trim()
-            val remoteBarcode = remote.barcode.trim().lowercase()
-            val remoteCartonBarcode = remote.cartonBarcode.trim().lowercase()
+            val remoteUnitCodes = remote.unitBarcodesList.map { it.lowercase() }
+            val remoteCartonCodes = remote.cartonBarcodesList.map { it.lowercase() }
             val remoteName = remote.name.trim().lowercase()
 
-            // Try matching existing local product by firestoreId -> barcode -> cartonBarcode -> name -> (id if same name or partial stock update)
+            // Try matching existing local product by firestoreId -> any unit barcode -> any cartonBarcode -> name -> (id if same name or partial stock update)
             val local = (if (remoteFsId.isNotBlank()) localByFirestoreId[remoteFsId] else null)
-                ?: (if (remoteBarcode.isNotBlank()) localByBarcode[remoteBarcode] else null)
-                ?: (if (remoteCartonBarcode.isNotBlank()) localByCartonBarcode[remoteCartonBarcode] else null)
+                ?: remoteUnitCodes.firstNotNullOfOrNull { localByBarcode[it] }
+                ?: remoteCartonCodes.firstNotNullOfOrNull { localByCartonBarcode[it] }
                 ?: (if (remoteName.isNotBlank()) localByName[remoteName] else null)
                 ?: run {
                     // Check if remoteFsId is "pid_<id>" or remote.id > 0
@@ -633,7 +644,7 @@ class AntarRepository(private val dao: StoreDao) {
                     val assignedId = if (remote.id > 0 && !localById.containsKey(remote.id)) remote.id else 0
                     val computedFsId = remoteFsId.ifBlank {
                         when {
-                            remote.barcode.isNotBlank() -> "bc_${remote.barcode.trim().replace(Regex("[^a-zA-Z0-9]"), "_")}"
+                            remote.primaryBarcode.isNotBlank() -> "bc_${remote.primaryBarcode.trim().replace(Regex("[^a-zA-Z0-9]"), "_")}"
                             assignedId > 0 -> "pid_$assignedId"
                             else -> "p_${remote.name.trim().hashCode().toUInt()}"
                         }

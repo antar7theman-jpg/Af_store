@@ -91,11 +91,13 @@ object StaffApprovalStatus {
     const val APPROVED = "APPROVED"
     const val REJECTED = "REJECTED"
     const val SUSPENDED = "SUSPENDED"
+    const val DELETED = "DELETED"
 
     fun labelAr(status: String): String = when (status.uppercase()) {
         APPROVED -> "معتمد ومفعّل ✓"
         REJECTED -> "مرفوض ✕"
         SUSPENDED -> "موقوف مؤقتاً ⏸"
+        DELETED -> "محذوف نهائياً 🗑"
         else -> "بانتظار موافقة الإدارة ⏳"
     }
 }
@@ -145,6 +147,9 @@ data class StaffAccount(
     val isPending: Boolean
         get() = approvalStatus == StaffApprovalStatus.PENDING
 
+    val isDeleted: Boolean
+        get() = approvalStatus == StaffApprovalStatus.DELETED
+
     val isOwner: Boolean
         get() = isApproved && (
             role == "owner" ||
@@ -159,7 +164,14 @@ data class StaffAccount(
         get() = isApproved && (isOwner || role == "manager")
 
     val isTrialExpired: Boolean
-        get() = isTrial && trialEndsAtMillis > 0 && System.currentTimeMillis() > trialEndsAtMillis && !isApprovedByOwner && !isOwner
+        get() = isTrial && !isOwner && trialEndsAtMillis > 0L && System.currentTimeMillis() >= trialEndsAtMillis
+
+    val remainingTrialMillis: Long
+        get() = if (isTrial && trialEndsAtMillis > 0L) {
+            (trialEndsAtMillis - System.currentTimeMillis()).coerceAtLeast(0L)
+        } else {
+            0L
+        }
 
     val canAccessProAdvancedFeatures: Boolean
         get() = isOwner || syncMode == "pro" || (isTrial && !isTrialExpired)
@@ -692,6 +704,9 @@ class StaffAccountRepository(
                 .putString("activeDeviceId", account.activeDeviceId)
                 .putString("activeDeviceName", account.activeDeviceName)
                 .putString("activeSessionToken", account.activeSessionToken)
+                .putBoolean("isTrial", account.isTrial)
+                .putLong("trialEndsAtMillis", account.trialEndsAtMillis)
+                .putBoolean("isApprovedByOwner", account.isApprovedByOwner)
                 .putString("syncMode", account.syncMode)
                 .apply()
         }
@@ -734,6 +749,9 @@ class StaffAccountRepository(
                 activeDeviceId = prefs.getString("activeDeviceId", "") ?: "",
                 activeDeviceName = prefs.getString("activeDeviceName", "") ?: "",
                 activeSessionToken = prefs.getString("activeSessionToken", "") ?: "",
+                isTrial = prefs.getBoolean("isTrial", false),
+                trialEndsAtMillis = prefs.getLong("trialEndsAtMillis", 0L),
+                isApprovedByOwner = prefs.getBoolean("isApprovedByOwner", true),
                 syncMode = prefs.getString("syncMode", "pro") ?: "pro",
                 createdAt = Timestamp.now(),
                 updatedAt = Timestamp.now()
@@ -745,6 +763,12 @@ class StaffAccountRepository(
         fun recordTerminatedSession(context: Context, newDeviceName: String) {
             val prefs = context.getSharedPreferences(PREFS_AUTH_SESSION, Context.MODE_PRIVATE)
             val msg = "تم إنهاء جلستك تلقائياً لأن الحساب فُتح في جهاز آخر (${newDeviceName.ifBlank { "جهاز آخر" }}). يُسمح بجهاز نشط واحد فقط في نفس الوقت."
+            prefs.edit().putString(KEY_TERMINATED_SESSION_REASON, msg).apply()
+        }
+
+        fun recordTrialExpiredSession(context: Context, managerName: String) {
+            val prefs = context.getSharedPreferences(PREFS_AUTH_SESSION, Context.MODE_PRIVATE)
+            val msg = "⛔ انتهت مدة التجربة (7 أيام) لحساب «${managerName.ifBlank { "المدير التجريبي" }}» وتم إنهاء الجلسة تلقائياً. لا يمكن الدخول للتطبيق إلا عندما يقوم المالك (Deffas antar) بالسماح لك."
             prefs.edit().putString(KEY_TERMINATED_SESSION_REASON, msg).apply()
         }
 
@@ -1080,9 +1104,32 @@ class StaffAccountRepository(
                 )
             }
 
+            if (targetAccount.approvalStatus == StaffApprovalStatus.DELETED) {
+                return Result.failure(
+                    IllegalStateException("تم حذف هذا الحساب نهائياً من قبل مالك المتجر (Deffas antar).")
+                )
+            }
+
+            if (targetAccount.isTrialExpired || (targetAccount.isTrial && !targetAccount.isOwner && targetAccount.approvalStatus == StaffApprovalStatus.SUSPENDED)) {
+                val expiredSuspended = targetAccount.copy(
+                    approvalStatus = StaffApprovalStatus.SUSPENDED,
+                    isApprovedByOwner = false,
+                    activeDeviceId = "",
+                    activeDeviceName = "",
+                    activeSessionToken = ""
+                )
+                saveAccountToLocalRegistry(context, expiredSuspended)
+                CoroutineScope(Dispatchers.IO).launch {
+                    runCatching { syncAccountToFirestore(expiredSuspended) }
+                }
+                return Result.failure(
+                    IllegalStateException("⛔ انتهت مدة التجربة (7 أيام) لحساب (${targetAccount.fullName}). تم إنهاء الجلسة وإغلاق الدخول تلقائياً ولا يمكن الدخول للتطبيق إلا عندما يقوم المالك (Deffas antar) بالسماح لك.")
+                )
+            }
+
             if (targetAccount.approvalStatus == StaffApprovalStatus.SUSPENDED) {
                 return Result.failure(
-                    IllegalStateException("تم إيقاف أو تجميد هذا الحساب مؤقتاً من قبل المالك.")
+                    IllegalStateException("تم إيقاف أو تجميد هذا الحساب مؤقتاً من قبل المالك (Deffas antar).")
                 )
             }
 
@@ -1192,6 +1239,24 @@ class StaffAccountRepository(
                     if (matched.approvalStatus == StaffApprovalStatus.PENDING) {
                         return Result.failure(
                             IllegalStateException("ملف الحساب (${matched.fullName}) مسجل وبانتظار موافقة وتفعيل المالك (Deffas antar).")
+                        )
+                    }
+                    if (matched.approvalStatus == StaffApprovalStatus.DELETED) {
+                        return Result.failure(
+                            IllegalStateException("تم حذف هذا الحساب نهائياً من قبل مالك المتجر (Deffas antar).")
+                        )
+                    }
+                    if (matched.isTrialExpired || (matched.isTrial && !matched.isOwner && matched.approvalStatus == StaffApprovalStatus.SUSPENDED)) {
+                        val expiredSuspended = matched.copy(
+                            approvalStatus = StaffApprovalStatus.SUSPENDED,
+                            isApprovedByOwner = false,
+                            activeDeviceId = "",
+                            activeDeviceName = "",
+                            activeSessionToken = ""
+                        )
+                        saveAccountToLocalRegistry(context, expiredSuspended)
+                        return Result.failure(
+                            IllegalStateException("⛔ انتهت مدة التجربة (7 أيام) لحساب (${matched.fullName}). تم إنهاء الجلسة وإغلاق الدخول تلقائياً ولا يمكن الدخول للتطبيق إلا عندما يقوم المالك (Deffas antar) بالسماح لك.")
                         )
                     }
                     if (!matched.isApproved) {
@@ -1391,9 +1456,6 @@ class StaffAccountRepository(
             }
 
             val docId = managerPreProvisionDocId(cleanName)
-            val trialDays = 7L
-            val trialDurationMillis = trialDays * 24L * 3600L * 1000L
-            val initialTrialEnd = System.currentTimeMillis() + trialDurationMillis
 
             val trialManager = StaffAccount(
                 userId = docId,
@@ -1407,7 +1469,8 @@ class StaffAccountRepository(
                 branchName = cleanStore,
                 secretPin = cleanPin,
                 isTrial = true,
-                trialEndsAtMillis = initialTrialEnd,
+                trialEndsAtMillis = 0L,
+                isApprovedByOwner = false,
                 syncMode = "pro",
                 canMakeSales = true,
                 canManageInventory = true,
@@ -1755,8 +1818,10 @@ class StaffAccountRepository(
         val updated = targetAccount.copy(
             approvalStatus = StaffApprovalStatus.APPROVED,
             role = "manager",
+            requestedRole = "manager",
             isTrial = asTrial7Days,
             trialEndsAtMillis = trialEnds,
+            isApprovedByOwner = !asTrial7Days,
             syncMode = "pro",
             approvedByUid = approvedByUid.ifBlank { "owner_deffas_antar" },
             approvedByName = approvedByName.ifBlank { OWNER_FULL_NAME },
@@ -1776,8 +1841,10 @@ class StaffAccountRepository(
         val updates = mutableMapOf<String, Any>(
             "approvalStatus" to StaffApprovalStatus.APPROVED,
             "role" to "manager",
+            "requestedRole" to "manager",
             "isTrial" to asTrial7Days,
             "trialEndsAtMillis" to trialEnds,
+            "isApprovedByOwner" to !asTrial7Days,
             "syncMode" to "pro",
             "approvedByUid" to approvedByUid.ifBlank { "owner_deffas_antar" },
             "approvedByName" to approvedByName.ifBlank { OWNER_FULL_NAME },
@@ -1794,7 +1861,14 @@ class StaffAccountRepository(
             "updatedAt" to FieldValue.serverTimestamp()
         )
         return try {
-            docRef.update(updates).await()
+            try {
+                docRef.update(updates).await()
+            } catch (_: Exception) {
+                docRef.set(updated.toFirestorePayload()).await()
+            }
+            appContext?.let { ctx ->
+                saveAccountToLocalRegistry(ctx, updated)
+            }
             try {
                 db.collection(COLLECTION_PRO_UPGRADE_REQUESTS).document(targetAccount.userId).update(
                     mapOf(
@@ -1807,7 +1881,47 @@ class StaffAccountRepository(
             Result.success(updated)
         } catch (e: Exception) {
             handleFirestoreError(e, OperationType.UPDATE, docRef.path)
-            Result.failure(e)
+            appContext?.let { ctx ->
+                saveAccountToLocalRegistry(ctx, updated)
+            }
+            Result.success(updated)
+        }
+    }
+
+    /**
+     * Automatically suspends and locks a Trial Manager account when the 7-day trial duration ends.
+     */
+    suspend fun expireTrialAccountAutomatically(
+        targetAccount: StaffAccount
+    ): Result<StaffAccount> {
+        val expiredAccount = targetAccount.copy(
+            approvalStatus = StaffApprovalStatus.SUSPENDED,
+            isTrial = true,
+            isApprovedByOwner = false,
+            activeDeviceId = "",
+            activeDeviceName = "",
+            activeSessionToken = "",
+            updatedAt = Timestamp.now()
+        )
+        appContext?.let { ctx ->
+            saveAccountToLocalRegistry(ctx, expiredAccount)
+        }
+        val docRef = db.collection(COLLECTION_STAFF).document(targetAccount.userId)
+        val updates = mapOf(
+            "approvalStatus" to StaffApprovalStatus.SUSPENDED,
+            "isTrial" to true,
+            "isApprovedByOwner" to false,
+            "activeDeviceId" to "",
+            "activeDeviceName" to "",
+            "activeSessionToken" to "",
+            "updatedAt" to FieldValue.serverTimestamp()
+        )
+        return try {
+            docRef.update(updates).await()
+            Result.success(expiredAccount)
+        } catch (e: Exception) {
+            Log.w("StaffRepo", "Failed to update expired trial account in Firestore: ${e.message}")
+            Result.success(expiredAccount)
         }
     }
 
@@ -2419,7 +2533,8 @@ class StaffAccountRepository(
         isCallerOwner: Boolean = false,
         ownerSecretCode: String = "",
         callerAccount: StaffAccount? = null,
-        syncMode: String = "pro"
+        syncMode: String = "pro",
+        asTrial7Days: Boolean? = null
     ): Result<Unit> {
         val managerUid = when {
             isCallerOwner -> "owner_deffas_antar"
@@ -2449,7 +2564,8 @@ class StaffAccountRepository(
                 StaffApprovalStatus.PENDING,
                 StaffApprovalStatus.APPROVED,
                 StaffApprovalStatus.REJECTED,
-                StaffApprovalStatus.SUSPENDED
+                StaffApprovalStatus.SUSPENDED,
+                StaffApprovalStatus.DELETED
             )
         ) newApprovalStatus else StaffApprovalStatus.PENDING
 
@@ -2460,6 +2576,31 @@ class StaffAccountRepository(
         }
         val safeSyncMode = if (syncMode in listOf("pro", "offline", "lite")) syncMode else "pro"
         val isManagerRole = safeRole == "manager" || safeRole == "admin" || safeRole == "owner"
+
+        val resolvedIsTrial: Boolean
+        val resolvedTrialEndsAtMillis: Long
+        val resolvedIsApprovedByOwner: Boolean
+
+        if (isManagerRole && safeStatus == StaffApprovalStatus.APPROVED) {
+            val activateAsTrial = asTrial7Days ?: (targetAccount.isTrial && targetAccount.isPending)
+            if (activateAsTrial) {
+                resolvedIsTrial = true
+                resolvedTrialEndsAtMillis = if (targetAccount.trialEndsAtMillis > System.currentTimeMillis() && !targetAccount.isPending) {
+                    targetAccount.trialEndsAtMillis
+                } else {
+                    System.currentTimeMillis() + (7L * 24L * 3600L * 1000L)
+                }
+                resolvedIsApprovedByOwner = false
+            } else {
+                resolvedIsTrial = false
+                resolvedTrialEndsAtMillis = 0L
+                resolvedIsApprovedByOwner = true
+            }
+        } else {
+            resolvedIsTrial = targetAccount.isTrial
+            resolvedTrialEndsAtMillis = targetAccount.trialEndsAtMillis
+            resolvedIsApprovedByOwner = targetAccount.isApprovedByOwner
+        }
 
         val staffRef = db.collection(COLLECTION_STAFF).document(targetAccount.userId)
         val updates = mutableMapOf<String, Any>(
@@ -2478,6 +2619,9 @@ class StaffAccountRepository(
             "canViewCostPrices" to permissions.canViewCostPrices,
             "canExportData" to permissions.canExportData,
             "canManagePurchaseInvoices" to permissions.canManagePurchaseInvoices,
+            "isTrial" to resolvedIsTrial,
+            "trialEndsAtMillis" to resolvedTrialEndsAtMillis,
+            "isApprovedByOwner" to resolvedIsApprovedByOwner,
             "syncMode" to safeSyncMode,
             "updatedAt" to FieldValue.serverTimestamp()
         )
@@ -2521,10 +2665,74 @@ class StaffAccountRepository(
         }
     }
 
+    suspend fun markStaffAccountAsDeleted(
+        targetAccount: StaffAccount,
+        deletedByUid: String = "owner_deffas_antar",
+        deletedByName: String = OWNER_FULL_NAME
+    ): Result<StaffAccount> {
+        val preservedRole = if (targetAccount.role == "manager" || targetAccount.requestedRole == "manager") {
+            "manager"
+        } else {
+            targetAccount.role
+        }
+        val updatedAccount = targetAccount.copy(
+            role = preservedRole,
+            requestedRole = preservedRole,
+            approvalStatus = StaffApprovalStatus.DELETED,
+            approvedByUid = deletedByUid,
+            approvedByName = deletedByName,
+            activeDeviceId = "",
+            activeDeviceName = "",
+            activeSessionToken = "",
+            updatedAt = Timestamp.now()
+        )
+        val staffRef = db.collection(COLLECTION_STAFF).document(targetAccount.userId)
+        val updates = mapOf(
+            "role" to preservedRole,
+            "requestedRole" to preservedRole,
+            "approvalStatus" to StaffApprovalStatus.DELETED,
+            "approvedByUid" to deletedByUid,
+            "approvedByName" to deletedByName,
+            "activeDeviceId" to "",
+            "activeDeviceName" to "",
+            "activeSessionToken" to "",
+            "updatedAt" to FieldValue.serverTimestamp()
+        )
+        return try {
+            try {
+                staffRef.update(updates).await()
+            } catch (_: Exception) {
+                staffRef.set(updatedAccount.toFirestorePayload()).await()
+            }
+            try {
+                db.collection(COLLECTION_PRO_UPGRADE_REQUESTS).document(targetAccount.userId).update(
+                    mapOf(
+                        "status" to "DELETED",
+                        "reviewedAt" to FieldValue.serverTimestamp(),
+                        "reviewedByUid" to deletedByUid
+                    )
+                ).await()
+            } catch (_: Exception) {}
+            appContext?.let { ctx ->
+                saveAccountToLocalRegistry(ctx, updatedAccount)
+            }
+            Result.success(updatedAccount)
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.UPDATE, staffRef.path)
+            appContext?.let { ctx ->
+                saveAccountToLocalRegistry(ctx, updatedAccount)
+            }
+            Result.success(updatedAccount)
+        }
+    }
+
     suspend fun deleteStaffAccount(targetUserId: String): Result<Unit> {
         val staffRef = db.collection(COLLECTION_STAFF).document(targetUserId)
         return try {
             staffRef.delete().await()
+            try {
+                db.collection(COLLECTION_PRO_UPGRADE_REQUESTS).document(targetUserId).delete().await()
+            } catch (_: Exception) {}
             Result.success(Unit)
         } catch (e: Exception) {
             handleFirestoreError(e, OperationType.DELETE, staffRef.path)
@@ -2640,9 +2848,22 @@ class StaffAccountRepository(
             reqRef.update(reqUpdates).await()
 
             if (approve) {
-                // Update manager staff account syncMode to "pro"
-                val staffUpdates = mapOf(
+                val isTrialReq = request.note.contains("تجريبي")
+                val sevenDaysEnds = if (isTrialReq) {
+                    System.currentTimeMillis() + (7L * 24L * 3600L * 1000L)
+                } else {
+                    0L
+                }
+                val staffUpdates = mutableMapOf<String, Any>(
+                    "approvalStatus" to StaffApprovalStatus.APPROVED,
+                    "role" to "manager",
+                    "requestedRole" to "manager",
                     "syncMode" to "pro",
+                    "isTrial" to isTrialReq,
+                    "trialEndsAtMillis" to sevenDaysEnds,
+                    "isApprovedByOwner" to !isTrialReq,
+                    "approvedByUid" to "owner_deffas_antar",
+                    "approvedByName" to reviewerName,
                     "updatedAt" to FieldValue.serverTimestamp()
                 )
                 staffRef.update(staffUpdates).await()
@@ -2652,7 +2873,20 @@ class StaffAccountRepository(
                     val local = loadLocalAccountsRegistry(ctx)
                     val match = local.find { it.userId == request.managerUid }
                     if (match != null) {
-                        saveAccountToLocalRegistry(ctx, match.copy(syncMode = "pro"))
+                        saveAccountToLocalRegistry(
+                            ctx,
+                            match.copy(
+                                approvalStatus = StaffApprovalStatus.APPROVED,
+                                role = "manager",
+                                requestedRole = "manager",
+                                syncMode = "pro",
+                                isTrial = isTrialReq,
+                                trialEndsAtMillis = sevenDaysEnds,
+                                isApprovedByOwner = !isTrialReq,
+                                approvedByUid = "owner_deffas_antar",
+                                approvedByName = reviewerName
+                            )
+                        )
                     }
                 }
             }

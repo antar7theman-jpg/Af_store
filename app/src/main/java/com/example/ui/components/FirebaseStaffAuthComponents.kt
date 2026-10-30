@@ -40,6 +40,7 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.text.KeyboardOptions
@@ -68,32 +69,41 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CloudDone
 import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.CloudSync
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.DeleteForever
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Email
+import androidx.compose.material.icons.filled.Restore
 import androidx.compose.material.icons.filled.Group
 import androidx.compose.material.icons.filled.HourglassTop
 import androidx.compose.material.icons.filled.HowToReg
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.LockClock
 import androidx.compose.material.icons.filled.LockPerson
 import androidx.compose.material.icons.filled.ManageAccounts
 import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PersonAdd
 import androidx.compose.material.icons.filled.Phone
 import androidx.compose.material.icons.filled.Security
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.VerifiedUser
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.filled.WarningAmber
+import kotlinx.coroutines.delay
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
@@ -387,7 +397,25 @@ fun FirebaseAuthAndApprovalGate(
         attemptedSilentSignIn = true
     }
 
-    val cachedApprovedAccount = savedPersistentAccount?.takeIf { it.isApproved }
+    LaunchedEffect(savedPersistentAccount) {
+        val currentAcc = savedPersistentAccount
+        if (currentAcc != null && !currentAcc.isOwner && currentAcc.isTrialExpired) {
+            StaffAccountRepository.recordTrialExpiredSession(context, currentAcc.fullName)
+            StaffAccountRepository.clearPersistentStaffSession(context)
+            val suspendedAcc = currentAcc.copy(
+                approvalStatus = StaffApprovalStatus.SUSPENDED,
+                isApprovedByOwner = false,
+                activeDeviceId = "",
+                activeDeviceName = "",
+                activeSessionToken = ""
+            )
+            StaffAccountRepository.saveAccountToLocalRegistry(context, suspendedAcc)
+            StaffAccountRepository.syncAccountToFirestore(suspendedAcc)
+            savedPersistentAccount = null
+        }
+    }
+
+    val cachedApprovedAccount = savedPersistentAccount?.takeIf { it.isApproved && !it.isTrialExpired }
 
     when {
         isDirectOwnerSessionActive -> {
@@ -412,7 +440,17 @@ fun FirebaseAuthAndApprovalGate(
         cachedApprovedAccount != null -> {
             SavedPersistentStaffSessionGate(
                 savedAccount = cachedApprovedAccount,
-                onApprovedAccountReady = onApprovedAccountReady,
+                onApprovedAccountReady = { updatedAcc ->
+                    if (keepSessionOpen && updatedAcc.isApproved && !updatedAcc.isTrialExpired) {
+                        StaffAccountRepository.savePersistentStaffSession(
+                            context = context,
+                            account = updatedAcc,
+                            isDirectOwnerSession = updatedAcc.isOwner
+                        )
+                    }
+                    savedPersistentAccount = updatedAcc
+                    onApprovedAccountReady(updatedAcc)
+                },
                 onOwnerCreatedManager = onOwnerCreatedManager,
                 onSignOut = handleManualSignOut,
                 approvedContent = approvedContent
@@ -522,6 +560,22 @@ private fun SavedPersistentStaffSessionGate(
 
     LaunchedEffect(savedAccount) {
         onApprovedAccountReady(savedAccount)
+    }
+
+    LaunchedEffect(savedAccount.userId, savedAccount.isTrial, savedAccount.trialEndsAtMillis, savedAccount.isApproved) {
+        if (savedAccount.isTrial && !savedAccount.isOwner && savedAccount.trialEndsAtMillis > 0L && savedAccount.isApproved) {
+            while (true) {
+                val now = System.currentTimeMillis()
+                if (now >= savedAccount.trialEndsAtMillis) {
+                    StaffAccountRepository.recordTrialExpiredSession(context, savedAccount.fullName)
+                    StaffAccountRepository.clearPersistentStaffSession(context)
+                    runCatching { repository.expireTrialAccountAutomatically(savedAccount) }
+                    onSignOut()
+                    break
+                }
+                delay(1000L)
+            }
+        }
     }
 
     LaunchedEffect(savedAccount.userId, savedAccount.isOwner) {
@@ -945,6 +999,36 @@ private fun FirebaseStaffSignInScreen(
                             thickness = 1.dp,
                             modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
                         )
+
+                        if (!terminatedSessionNotice.isNullOrBlank()) {
+                            Surface(
+                                shape = RoundedCornerShape(14.dp),
+                                color = semantic.dangerRed.copy(alpha = 0.14f),
+                                border = BorderStroke(1.2.dp, semantic.dangerRed),
+                                modifier = Modifier.fillMaxWidth().testTag("welcome_terminated_session_banner")
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(14.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.LockClock,
+                                        contentDescription = null,
+                                        tint = semantic.dangerRed,
+                                        modifier = Modifier.size(24.dp)
+                                    )
+                                    Text(
+                                        text = terminatedSessionNotice.orEmpty(),
+                                        color = semantic.dangerRed,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 12.sp,
+                                        lineHeight = 17.sp,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                }
+                            }
+                        }
 
                         if (!activeSuccessBanner.isNullOrBlank()) {
                             Surface(
@@ -3360,13 +3444,15 @@ fun StaffAccountsManagementModal(
     val context = LocalContext.current
     val semantic = LocalAFStoreSemanticColors.current
     val scope = rememberCoroutineScope()
-    var selectedTabItem by rememberSaveable { mutableIntStateOf(0) }
+    var selectedTabKey by rememberSaveable { mutableStateOf("ALL") }
     var selectedManagerFilterUid by rememberSaveable { mutableStateOf("") }
     var searchQuery by rememberSaveable { mutableStateOf("") }
     var editingPermissionsTarget by remember { mutableStateOf<StaffAccount?>(null) }
     var showCreateManagerDialog by rememberSaveable { mutableStateOf(false) }
     var showCreateWorkerDialog by rememberSaveable { mutableStateOf(false) }
     var pendingPromoteToManagerTarget by remember { mutableStateOf<StaffAccount?>(null) }
+    var pendingDeleteConfirmTarget by remember { mutableStateOf<StaffAccount?>(null) }
+    var pendingPurgeConfirmTarget by remember { mutableStateOf<StaffAccount?>(null) }
     var actionFeedbackMessage by remember { mutableStateOf<String?>(null) }
     val allUpgradeRequests by repository.observeAllProUpgradeRequests().collectAsStateWithLifecycle(emptyList())
     val pendingProUpgradeRequests = remember(allUpgradeRequests) { allUpgradeRequests.filter { it.isPending } }
@@ -3383,44 +3469,67 @@ fun StaffAccountsManagementModal(
         }
     }
 
+    val activeVisibleAccounts = remember(visibleAccounts) {
+        visibleAccounts.filter { it.approvalStatus != StaffApprovalStatus.DELETED }
+    }
+
+    val deletedAccountsList = remember(visibleAccounts) {
+        visibleAccounts.filter { it.approvalStatus == StaffApprovalStatus.DELETED && !it.isOwner }
+    }
+
     val independentManagersList = remember(allAccounts) {
-        allAccounts.filter { it.role == "manager" && !it.isOwner }
+        allAccounts.filter {
+            it.role == "manager" &&
+                !it.isOwner &&
+                it.approvalStatus != StaffApprovalStatus.DELETED
+        }
     }
 
-    val myAffiliatedWorkersCount = remember(visibleAccounts, myAccount) {
-        visibleAccounts.count { it.role == "worker" && !it.isOwner && it.userId != myAccount.userId }
+    val myAffiliatedWorkersCount = remember(activeVisibleAccounts, myAccount) {
+        activeVisibleAccounts.count { it.role == "worker" && !it.isOwner && it.userId != myAccount.userId }
     }
 
-    val pendingCount = remember(visibleAccounts) {
-        visibleAccounts.count { it.approvalStatus == StaffApprovalStatus.PENDING }
+    val pendingCount = remember(activeVisibleAccounts) {
+        activeVisibleAccounts.count { it.approvalStatus == StaffApprovalStatus.PENDING }
     }
-    val approvedCount = remember(visibleAccounts) {
-        visibleAccounts.count { it.approvalStatus == StaffApprovalStatus.APPROVED }
+    val approvedCount = remember(activeVisibleAccounts) {
+        activeVisibleAccounts.count { it.approvalStatus == StaffApprovalStatus.APPROVED }
     }
-    val managersCount = remember(allAccounts) {
-        allAccounts.count { it.role == "manager" || it.isOwner }
+    val managersCount = remember(activeVisibleAccounts) {
+        activeVisibleAccounts.count { it.role == "manager" || it.isOwner }
     }
-    val blockedCount = remember(visibleAccounts) {
-        visibleAccounts.count {
+    val blockedCount = remember(activeVisibleAccounts) {
+        activeVisibleAccounts.count {
             it.approvalStatus == StaffApprovalStatus.REJECTED ||
                     it.approvalStatus == StaffApprovalStatus.SUSPENDED
         }
     }
+    val deletedManagersCount = remember(deletedAccountsList) {
+        deletedAccountsList.size
+    }
 
-    val filteredAccounts = remember(visibleAccounts, selectedTabItem, selectedManagerFilterUid, searchQuery, independentManagersList) {
-        val baseFiltered = when (selectedTabItem) {
-            1 -> visibleAccounts.filter { it.role == "manager" || it.isOwner || it.requestedRole == "manager" }
-            2 -> visibleAccounts.filter { it.role == "worker" && !it.isOwner }
-            3 -> visibleAccounts.filter { it.approvalStatus == StaffApprovalStatus.PENDING }
-            4 -> visibleAccounts.filter { it.approvalStatus == StaffApprovalStatus.APPROVED }
-            5 -> visibleAccounts.filter {
+    val filteredAccounts = remember(
+        activeVisibleAccounts,
+        deletedAccountsList,
+        selectedTabKey,
+        selectedManagerFilterUid,
+        searchQuery,
+        independentManagersList
+    ) {
+        val baseFiltered = when (selectedTabKey) {
+            "MANAGERS" -> activeVisibleAccounts.filter { it.role == "manager" || it.isOwner || it.requestedRole == "manager" }
+            "WORKERS" -> activeVisibleAccounts.filter { it.role == "worker" && !it.isOwner }
+            "PENDING" -> activeVisibleAccounts.filter { it.approvalStatus == StaffApprovalStatus.PENDING }
+            "APPROVED" -> activeVisibleAccounts.filter { it.approvalStatus == StaffApprovalStatus.APPROVED }
+            "SUSPENDED" -> activeVisibleAccounts.filter {
                 it.approvalStatus == StaffApprovalStatus.REJECTED ||
                         it.approvalStatus == StaffApprovalStatus.SUSPENDED
             }
-            else -> visibleAccounts
+            "DELETED_MANAGERS" -> deletedAccountsList
+            else -> activeVisibleAccounts
         }
 
-        val managerFiltered = if (selectedManagerFilterUid.isBlank()) {
+        val managerFiltered = if (selectedManagerFilterUid.isBlank() || selectedTabKey == "DELETED_MANAGERS") {
             baseFiltered
         } else {
             val selectedMgr = independentManagersList.firstOrNull { it.userId == selectedManagerFilterUid }
@@ -3741,81 +3850,254 @@ fun StaffAccountsManagementModal(
                         singleLine = true
                     )
 
-                    // Horizontal Tabs with Count Badges
-                    val tabsList = remember(isCallerOwner, visibleAccounts.size, managersCount, myAffiliatedWorkersCount, pendingCount, approvedCount, blockedCount) {
-                        listOfNotNull(
-                            "الكل (${visibleAccounts.size})",
-                            if (isCallerOwner) "المدراء ($managersCount)" else null,
-                            "العمال ($myAffiliatedWorkersCount)",
-                            if (pendingCount > 0) "المعلقة ⏳ ($pendingCount)" else "المعلقة ($pendingCount)",
-                            "المعتمدة ✓ ($approvedCount)",
-                            if (blockedCount > 0) "الموقوفة ($blockedCount)" else null
-                        )
+                    // Horizontal Tabs with Count Badges (including Deleted Managers tab)
+                    val tabsList = remember(
+                        isCallerOwner,
+                        activeVisibleAccounts.size,
+                        managersCount,
+                        myAffiliatedWorkersCount,
+                        pendingCount,
+                        approvedCount,
+                        blockedCount,
+                        deletedManagersCount
+                    ) {
+                        buildList {
+                            add("ALL" to "الكل (${activeVisibleAccounts.size})")
+                            if (isCallerOwner) {
+                                add("MANAGERS" to "المدراء ($managersCount)")
+                            }
+                            add("WORKERS" to "العمال ($myAffiliatedWorkersCount)")
+                            add("PENDING" to if (pendingCount > 0) "المعلقة ⏳ ($pendingCount)" else "المعلقة ($pendingCount)")
+                            add("APPROVED" to "المعتمدة ✓ ($approvedCount)")
+                            add("SUSPENDED" to "الموقوفة ($blockedCount)")
+                            add("DELETED_MANAGERS" to "المدراء المحذوفين نهائياً 🗑 ($deletedManagersCount)")
+                        }
+                    }
+
+                    val selectedTabIndex = remember(tabsList, selectedTabKey) {
+                        tabsList.indexOfFirst { it.first == selectedTabKey }.takeIf { it >= 0 } ?: 0
                     }
 
                     ScrollableTabRow(
-                        selectedTabIndex = selectedTabItem.coerceAtMost(tabsList.size - 1),
+                        selectedTabIndex = selectedTabIndex,
                         edgePadding = 0.dp,
                         divider = {},
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        tabsList.forEachIndexed { index, tabTitle ->
+                        tabsList.forEach { (tabKey, tabTitle) ->
+                            val isSelected = selectedTabKey == tabKey
+                            val isDeletedTab = tabKey == "DELETED_MANAGERS"
                             Tab(
-                                selected = selectedTabItem == index,
+                                selected = isSelected,
                                 onClick = {
-                                    selectedTabItem = index
+                                    selectedTabKey = tabKey
                                     selectedManagerFilterUid = ""
                                 },
+                                modifier = Modifier.testTag("staff_tab_$tabKey"),
                                 text = {
                                     Text(
                                         text = tabTitle,
-                                        fontWeight = if (selectedTabItem == index) FontWeight.ExtraBold else FontWeight.Medium,
+                                        fontWeight = if (isSelected) FontWeight.ExtraBold else FontWeight.Bold,
                                         fontSize = 12.sp,
-                                        color = if (selectedTabItem == index) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                                        color = when {
+                                            isSelected && isDeletedTab -> semantic.dangerRed
+                                            isSelected -> MaterialTheme.colorScheme.primary
+                                            isDeletedTab -> semantic.dangerRed.copy(alpha = 0.85f)
+                                            else -> MaterialTheme.colorScheme.onSurfaceVariant
+                                        }
                                     )
                                 }
                             )
                         }
                     }
 
-                    // Owner Hierarchy Filter by Independent Manager (if selected)
-                    if (isCallerOwner && independentManagersList.isNotEmpty()) {
+                    // Quick shortcut chip to Deleted Managers when viewing Suspended/Managers tabs
+                    if (isCallerOwner && selectedTabKey != "DELETED_MANAGERS") {
                         Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 2.dp),
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text("تصفية بالمدير:", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            ScrollableTabRow(
-                                selectedTabIndex = 0,
-                                edgePadding = 0.dp,
-                                divider = {},
-                                modifier = Modifier.weight(1f)
+                            Surface(
+                                shape = RoundedCornerShape(10.dp),
+                                color = semantic.dangerRed.copy(alpha = 0.10f),
+                                border = BorderStroke(1.dp, semantic.dangerRed.copy(alpha = 0.4f)),
+                                modifier = Modifier
+                                    .clickable {
+                                        selectedTabKey = "DELETED_MANAGERS"
+                                        selectedManagerFilterUid = ""
+                                    }
+                                    .testTag("quick_open_deleted_managers_tab_btn")
                             ) {
-                                FilterChip(
-                                    selected = selectedManagerFilterUid.isBlank(),
-                                    onClick = { selectedManagerFilterUid = "" },
-                                    label = { Text("جميع الفرق", fontSize = 11.sp) },
-                                    modifier = Modifier.padding(end = 4.dp)
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(5.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.DeleteForever,
+                                        contentDescription = null,
+                                        tint = semantic.dangerRed,
+                                        modifier = Modifier.size(15.dp)
+                                    )
+                                    Text(
+                                        text = "المدراء المحذوفين نهائياً ($deletedManagersCount)",
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.ExtraBold,
+                                        color = semantic.dangerRed
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    // Owner Hierarchy Filter by Independent Manager (Dropdown Menu)
+                    if (isCallerOwner && independentManagersList.isNotEmpty() && selectedTabKey != "DELETED_MANAGERS") {
+                        var isManagerDropdownExpanded by remember { mutableStateOf(false) }
+                        val selectedMgrObj = independentManagersList.firstOrNull { it.userId == selectedManagerFilterUid }
+                        val selectedMgrWorkersCount = if (selectedMgrObj != null) {
+                            allAccounts.count { it.isAffiliatedWithManager(selectedMgrObj) }
+                        } else 0
+
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 2.dp)
+                        ) {
+                            Surface(
+                                shape = RoundedCornerShape(10.dp),
+                                color = if (selectedMgrObj != null) {
+                                    MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.65f)
+                                } else {
+                                    MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
+                                },
+                                border = BorderStroke(
+                                    1.dp,
+                                    if (selectedMgrObj != null) MaterialTheme.colorScheme.primary else semantic.cardBorder
+                                ),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { isManagerDropdownExpanded = true }
+                                    .testTag("owner_manager_filter_dropdown_btn")
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 12.dp, vertical = 9.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                        modifier = Modifier.weight(1f)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.AdminPanelSettings,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                        Text(
+                                            text = if (selectedMgrObj != null) {
+                                                "تصفية بالمدير: ${selectedMgrObj.fullName} ($selectedMgrWorkersCount عمال)"
+                                            } else {
+                                                "تصفية بالمدير: جميع الفرق (${independentManagersList.size} مدراء)"
+                                            },
+                                            fontSize = 11.5.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.onSurface
+                                        )
+                                    }
+
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                    ) {
+                                        if (selectedMgrObj != null) {
+                                            Text(
+                                                text = "إلغاء",
+                                                fontSize = 10.5.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = semantic.dangerRed,
+                                                modifier = Modifier
+                                                    .clickable { selectedManagerFilterUid = "" }
+                                                    .padding(horizontal = 4.dp, vertical = 2.dp)
+                                            )
+                                        }
+                                        Icon(
+                                            imageVector = Icons.Default.ArrowDropDown,
+                                            contentDescription = "فتح القائمة المنسدلة للمدراء",
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                    }
+                                }
+                            }
+
+                            DropdownMenu(
+                                expanded = isManagerDropdownExpanded,
+                                onDismissRequest = { isManagerDropdownExpanded = false },
+                                modifier = Modifier
+                                    .fillMaxWidth(0.88f)
+                                    .heightIn(max = 320.dp)
+                            ) {
+                                DropdownMenuItem(
+                                    text = {
+                                        Text(
+                                            text = "جميع الفرق والمدراء (${independentManagersList.size})",
+                                            fontWeight = if (selectedManagerFilterUid.isBlank()) FontWeight.ExtraBold else FontWeight.Normal,
+                                            fontSize = 12.sp
+                                        )
+                                    },
+                                    onClick = {
+                                        selectedManagerFilterUid = ""
+                                        isManagerDropdownExpanded = false
+                                    }
                                 )
+                                HorizontalDivider()
                                 independentManagersList.forEach { mgr ->
                                     val countForMgr = allAccounts.count { it.isAffiliatedWithManager(mgr) }
                                     val isSelected = selectedManagerFilterUid == mgr.userId
-                                    FilterChip(
-                                        selected = isSelected,
+                                    DropdownMenuItem(
+                                        text = {
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Column(modifier = Modifier.weight(1f)) {
+                                                    Text(
+                                                        text = mgr.fullName.ifBlank { mgr.email },
+                                                        fontWeight = if (isSelected) FontWeight.ExtraBold else FontWeight.SemiBold,
+                                                        fontSize = 12.sp
+                                                    )
+                                                    if (mgr.branchName.isNotBlank()) {
+                                                        Text(
+                                                            text = "الفرع: ${mgr.branchName}",
+                                                            fontSize = 10.sp,
+                                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                        )
+                                                    }
+                                                }
+                                                Surface(
+                                                    shape = RoundedCornerShape(6.dp),
+                                                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
+                                                ) {
+                                                    Text(
+                                                        text = "$countForMgr عمال",
+                                                        fontSize = 10.5.sp,
+                                                        fontWeight = FontWeight.Bold,
+                                                        color = MaterialTheme.colorScheme.primary,
+                                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                                    )
+                                                }
+                                            }
+                                        },
                                         onClick = {
-                                            selectedManagerFilterUid = if (isSelected) "" else mgr.userId
-                                        },
-                                        label = {
-                                            Text(
-                                                text = "${mgr.fullName} ($countForMgr)",
-                                                fontSize = 11.sp,
-                                                fontWeight = FontWeight.Bold
-                                            )
-                                        },
-                                        modifier = Modifier.padding(end = 4.dp)
+                                            selectedManagerFilterUid = mgr.userId
+                                            isManagerDropdownExpanded = false
+                                        }
                                     )
                                 }
                             }
@@ -3886,6 +4168,44 @@ fun StaffAccountsManagementModal(
                             verticalArrangement = Arrangement.spacedBy(10.dp),
                             contentPadding = PaddingValues(bottom = 12.dp)
                         ) {
+                            if (selectedTabKey == "DELETED_MANAGERS") {
+                                item {
+                                    Surface(
+                                        shape = RoundedCornerShape(12.dp),
+                                        color = semantic.dangerRed.copy(alpha = 0.10f),
+                                        border = BorderStroke(1.dp, semantic.dangerRed.copy(alpha = 0.40f)),
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(horizontal = 12.dp, vertical = 10.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.DeleteForever,
+                                                contentDescription = null,
+                                                tint = semantic.dangerRed,
+                                                modifier = Modifier.size(22.dp)
+                                            )
+                                            Column(modifier = Modifier.weight(1f)) {
+                                                Text(
+                                                    text = "قائمة المدراء والحسابات المحذوفة نهائياً ($deletedManagersCount)",
+                                                    fontWeight = FontWeight.ExtraBold,
+                                                    fontSize = 12.5.sp,
+                                                    color = semantic.dangerRed
+                                                )
+                                                Text(
+                                                    text = "هذه الحسابات محذوفة نهائياً ولا يمكن لأصحابها تسجيل الدخول من أي هاتف. يمكنك استعادتها أو مسحها من السجل كلياً.",
+                                                    fontSize = 11.sp,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                             if (filteredAccounts.isEmpty()) {
                                 item {
                                     Surface(
@@ -3902,21 +4222,28 @@ fun StaffAccountsManagementModal(
                                             verticalArrangement = Arrangement.spacedBy(8.dp)
                                         ) {
                                             Icon(
-                                                imageVector = Icons.Default.Group,
+                                                imageVector = if (selectedTabKey == "DELETED_MANAGERS") Icons.Default.DeleteForever else Icons.Default.Group,
                                                 contentDescription = null,
-                                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                tint = if (selectedTabKey == "DELETED_MANAGERS") semantic.dangerRed else MaterialTheme.colorScheme.onSurfaceVariant,
                                                 modifier = Modifier.size(36.dp)
                                             )
                                             Text(
-                                                text = "لا توجد حسابات مطابقة للفلتر أو البحث المحدد",
+                                                text = if (selectedTabKey == "DELETED_MANAGERS") {
+                                                    "لا يوجد مدراء محذوفون نهائياً حالياً"
+                                                } else {
+                                                    "لا توجد حسابات مطابقة للفلتر أو البحث المحدد"
+                                                },
                                                 fontWeight = FontWeight.Bold,
                                                 fontSize = 14.sp
                                             )
                                             Text(
-                                                text = if (isCallerOwner) {
-                                                    "يمكنك إنشاء ملف مدير مستقل جديد أو إنشاء حساب عامل تابع من الأزرار أعلاه."
-                                                } else {
-                                                    "اضغط على زر «إنشاء حساب عامل تابع لملفي» أعلاه لإضافة عمال تابعين لفرعك برمز سري وصلاحيات مخصصة."
+                                                text = when {
+                                                    selectedTabKey == "DELETED_MANAGERS" ->
+                                                        "عند قيامك بحذف أي مدير وتأكيد الحذف من نافذة التأكيد، سيظهر سجله في هذا التبويب."
+                                                    isCallerOwner ->
+                                                        "يمكنك إنشاء ملف مدير مستقل جديد أو إنشاء حساب عامل تابع من الأزرار أعلاه."
+                                                    else ->
+                                                        "اضغط على زر «إنشاء حساب عامل تابع لملفي» أعلاه لإضافة عمال تابعين لفرعك برمز سري وصلاحيات مخصصة."
                                                 },
                                                 fontSize = 12.sp,
                                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -3928,7 +4255,7 @@ fun StaffAccountsManagementModal(
                             } else {
                                 items(filteredAccounts, key = { it.userId }) { staff ->
                                     val affiliatedCountForThisManager = if (staff.role == "manager" && !staff.isOwner) {
-                                        allAccounts.count { it.isAffiliatedWithManager(staff) }
+                                        allAccounts.count { it.isAffiliatedWithManager(staff) && !it.isDeleted }
                                     } else {
                                         0
                                     }
@@ -3970,6 +4297,44 @@ fun StaffAccountsManagementModal(
                                         onQuickApproveAsManager = {
                                             pendingPromoteToManagerTarget = staff
                                         },
+                                        onExtendOrApproveTrial7Days = {
+                                            scope.launch {
+                                                val res = repository.approvePendingManagerRequest(
+                                                    targetAccount = staff,
+                                                    approvedByUid = myAccount.userId,
+                                                    approvedByName = StaffAccountRepository.OWNER_FULL_NAME,
+                                                    asTrial7Days = true
+                                                )
+                                                if (res.isSuccess) {
+                                                    val approvedTrial = res.getOrThrow()
+                                                    StaffAccountRepository.saveAccountToLocalRegistry(context, approvedTrial)
+                                                    onLocalRegistryUpdated()
+                                                    onOwnerCreatedManager(approvedTrial, approvedTrial.secretPin.ifBlank { "1234" })
+                                                    actionFeedbackMessage = "تم تفعيل/تمديد الفترة التجريبية Pro (7 أيام ⏱) للمدير المستقل «${staff.fullName}» بنجاح ✓"
+                                                } else {
+                                                    actionFeedbackMessage = "تعذر تفعيل التجربة: ${res.exceptionOrNull()?.localizedMessage}"
+                                                }
+                                            }
+                                        },
+                                        onAllowPermanentManager = {
+                                            scope.launch {
+                                                val res = repository.approvePendingManagerRequest(
+                                                    targetAccount = staff,
+                                                    approvedByUid = myAccount.userId,
+                                                    approvedByName = StaffAccountRepository.OWNER_FULL_NAME,
+                                                    asTrial7Days = false
+                                                )
+                                                if (res.isSuccess) {
+                                                    val approvedPermanent = res.getOrThrow()
+                                                    StaffAccountRepository.saveAccountToLocalRegistry(context, approvedPermanent)
+                                                    onLocalRegistryUpdated()
+                                                    onOwnerCreatedManager(approvedPermanent, approvedPermanent.secretPin.ifBlank { "1234" })
+                                                    actionFeedbackMessage = "تم السماح للمدير «${staff.fullName}» وتفعيل حسابه بشكل دائم (بدون مؤقت) ✓"
+                                                } else {
+                                                    actionFeedbackMessage = "تعذر التفعيل الدائم: ${res.exceptionOrNull()?.localizedMessage}"
+                                                }
+                                            }
+                                        },
                                         onRejectOrSuspend = { newStatus ->
                                             scope.launch {
                                                 val updatedAcc = staff.copy(approvalStatus = newStatus)
@@ -3994,6 +4359,12 @@ fun StaffAccountsManagementModal(
                                         },
                                         onCustomizePermissions = {
                                             editingPermissionsTarget = staff
+                                        },
+                                        onRequestDelete = {
+                                            pendingDeleteConfirmTarget = staff
+                                        },
+                                        onRequestPurgeFromArchive = {
+                                            pendingPurgeConfirmTarget = staff
                                         }
                                     )
                                 }
@@ -4122,6 +4493,12 @@ fun StaffAccountsManagementModal(
                         canExportData = true,
                         canManagePurchaseInvoices = true
                     )
+                    val activateAsTrial = target.isTrial && target.isPending
+                    val trialEnd = if (activateAsTrial) {
+                        System.currentTimeMillis() + (7L * 24L * 3600L * 1000L)
+                    } else {
+                        0L
+                    }
                     val res = repository.approveOrUpdateStaffAccount(
                         targetAccount = target,
                         newApprovalStatus = StaffApprovalStatus.APPROVED,
@@ -4130,7 +4507,8 @@ fun StaffAccountsManagementModal(
                         managerName = StaffAccountRepository.OWNER_FULL_NAME,
                         isCallerOwner = true,
                         ownerSecretCode = verifiedSecret,
-                        callerAccount = myAccount
+                        callerAccount = myAccount,
+                        asTrial7Days = activateAsTrial
                     )
                     pendingPromoteToManagerTarget = null
                     if (res.isSuccess) {
@@ -4138,12 +4516,19 @@ fun StaffAccountsManagementModal(
                             role = "manager",
                             requestedRole = "manager",
                             approvalStatus = StaffApprovalStatus.APPROVED,
+                            isTrial = activateAsTrial,
+                            trialEndsAtMillis = trialEnd,
+                            isApprovedByOwner = !activateAsTrial,
                             approvedByName = StaffAccountRepository.OWNER_FULL_NAME
                         )
                         StaffAccountRepository.saveAccountToLocalRegistry(context, promoted)
                         onLocalRegistryUpdated()
                         onOwnerCreatedManager(promoted, promoted.secretPin.ifBlank { "1234" })
-                        actionFeedbackMessage = "تم اعتماد وتفعيل ملف المدير المستقل «${target.fullName}» بواسطة المالك Deffas antar ✓"
+                        actionFeedbackMessage = if (activateAsTrial) {
+                            "تم قبول وتفعيل الحساب التجريبي Pro (لمدة 7 أيام ⏱) للمدير المستقل «${target.fullName}» بنجاح ✓"
+                        } else {
+                            "تم السماح واعتماد ملف المدير المستقل «${target.fullName}» بشكل دائم بواسطة المالك Deffas antar ✓"
+                        }
                     } else {
                         actionFeedbackMessage = "تعذر التحديث: ${res.exceptionOrNull()?.localizedMessage}"
                     }
@@ -4194,6 +4579,190 @@ fun StaffAccountsManagementModal(
                     } else {
                         actionFeedbackMessage = "تعذر حفظ الصلاحيات: ${res.exceptionOrNull()?.localizedMessage}"
                     }
+                }
+            }
+        )
+    }
+
+    pendingDeleteConfirmTarget?.let { targetToDelete ->
+        val roleTitleAr = if (targetToDelete.role == "manager" || targetToDelete.requestedRole == "manager") {
+            "المدير المستقل"
+        } else {
+            "العامل"
+        }
+        AlertDialog(
+            onDismissRequest = { pendingDeleteConfirmTarget = null },
+            icon = {
+                Surface(
+                    shape = CircleShape,
+                    color = semantic.dangerRed.copy(alpha = 0.15f),
+                    modifier = Modifier.size(52.dp)
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            imageVector = Icons.Default.DeleteForever,
+                            contentDescription = null,
+                            tint = semantic.dangerRed,
+                            modifier = Modifier.size(30.dp)
+                        )
+                    }
+                }
+            },
+            title = {
+                Text(
+                    text = "تأكيد الحذف النهائي للحساب",
+                    fontWeight = FontWeight.ExtraBold,
+                    fontSize = 16.sp,
+                    color = semantic.dangerRed,
+                    textAlign = TextAlign.Center
+                )
+            },
+            text = {
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        text = "هل أنت متأكد من رغبتك في حذف حساب $roleTitleAr «${targetToDelete.fullName}» نهائياً؟",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 13.5.sp,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    if (targetToDelete.branchName.isNotBlank() || targetToDelete.email.isNotBlank()) {
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(10.dp),
+                                verticalArrangement = Arrangement.spacedBy(3.dp)
+                            ) {
+                                Text(
+                                    text = "الاسم: ${targetToDelete.fullName}",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                if (targetToDelete.branchName.isNotBlank()) {
+                                    Text(
+                                        text = "الفرع: ${targetToDelete.branchName}",
+                                        fontSize = 11.5.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                if (targetToDelete.phone.isNotBlank()) {
+                                    Text(
+                                        text = "الهاتف: ${targetToDelete.phone}",
+                                        fontSize = 11.5.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    Text(
+                        text = "• سيتم إلغاء صلاحية دخول هذا الحساب فوراً من جميع الهواتف.\n• سينتقل الحساب إلى تبويب «المدراء المحذوفين نهائياً 🗑» للرجوع إليه أو استعادته أو مسحه كلياً.",
+                        fontSize = 12.sp,
+                        lineHeight = 17.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val target = targetToDelete
+                        pendingDeleteConfirmTarget = null
+                        scope.launch {
+                            val res = repository.markStaffAccountAsDeleted(
+                                targetAccount = target,
+                                deletedByUid = myAccount.userId,
+                                deletedByName = myAccount.fullName
+                            )
+                            val deletedAcc = res.getOrNull() ?: target.copy(approvalStatus = StaffApprovalStatus.DELETED)
+                            StaffAccountRepository.saveAccountToLocalRegistry(context, deletedAcc)
+                            onLocalRegistryUpdated()
+                            actionFeedbackMessage = "تم حذف حساب «${target.fullName}» نهائياً ونقله إلى تبويب «المدراء المحذوفين نهائياً» 🗑"
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = semantic.dangerRed,
+                        contentColor = Color.White
+                    ),
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier.testTag("confirm_delete_staff_dialog_btn")
+                ) {
+                    Icon(Icons.Default.DeleteForever, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("نعم، تأكيد الحذف النهائي", fontWeight = FontWeight.ExtraBold)
+                }
+            },
+            dismissButton = {
+                OutlinedButton(
+                    onClick = { pendingDeleteConfirmTarget = null },
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier.testTag("cancel_delete_staff_dialog_btn")
+                ) {
+                    Text("إلغاء التراجع", fontWeight = FontWeight.Bold)
+                }
+            }
+        )
+    }
+
+    pendingPurgeConfirmTarget?.let { targetToPurge ->
+        AlertDialog(
+            onDismissRequest = { pendingPurgeConfirmTarget = null },
+            icon = {
+                Icon(
+                    imageVector = Icons.Default.WarningAmber,
+                    contentDescription = null,
+                    tint = semantic.dangerRed,
+                    modifier = Modifier.size(34.dp)
+                )
+            },
+            title = {
+                Text(
+                    text = "تأكيد المسح الكلي من الأرشيف",
+                    fontWeight = FontWeight.ExtraBold,
+                    fontSize = 15.5.sp,
+                    color = semantic.dangerRed
+                )
+            },
+            text = {
+                Text(
+                    text = "هل أنت متأكد من مسح سجل «${targetToPurge.fullName}» نهائياً من قاعدة البيانات وأرشيف المحذوفين؟ لا يمكن التراجع عن هذه الخطوة.",
+                    fontSize = 12.5.sp,
+                    lineHeight = 18.sp
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val target = targetToPurge
+                        pendingPurgeConfirmTarget = null
+                        scope.launch {
+                            repository.deleteStaffAccount(target.userId)
+                            StaffAccountRepository.removeAccountFromLocalRegistry(context, target.userId, target.email)
+                            onLocalRegistryUpdated()
+                            actionFeedbackMessage = "تم مسح سجل «${target.fullName}» نهائياً من الأرشيف وقاعدة البيانات."
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = semantic.dangerRed,
+                        contentColor = Color.White
+                    ),
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier.testTag("confirm_purge_staff_dialog_btn")
+                ) {
+                    Text("مسح نهائي من السجل", fontWeight = FontWeight.ExtraBold)
+                }
+            },
+            dismissButton = {
+                OutlinedButton(
+                    onClick = { pendingPurgeConfirmTarget = null },
+                    shape = RoundedCornerShape(10.dp)
+                ) {
+                    Text("إلغاء", fontWeight = FontWeight.Bold)
                 }
             }
         )
@@ -5101,8 +5670,12 @@ private fun StaffAccountApprovalItemCard(
     isCallerOwner: Boolean,
     onQuickApproveAsWorker: () -> Unit,
     onQuickApproveAsManager: () -> Unit,
+    onExtendOrApproveTrial7Days: () -> Unit = {},
+    onAllowPermanentManager: () -> Unit = {},
     onRejectOrSuspend: (String) -> Unit,
-    onCustomizePermissions: () -> Unit
+    onCustomizePermissions: () -> Unit,
+    onRequestDelete: () -> Unit = {},
+    onRequestPurgeFromArchive: () -> Unit = {}
 ) {
     val semantic = LocalAFStoreSemanticColors.current
     val statusColor = when (staff.approvalStatus) {
@@ -5240,6 +5813,7 @@ private fun StaffAccountApprovalItemCard(
                             }
                         }
                     }
+                    TrialManagerUnderNameCountdownBadge(account = staff)
                     Text(
                         text = staff.email + (if (staff.phone.isNotBlank()) " • ${staff.phone}" else ""),
                         fontSize = 11.5.sp,
@@ -5292,88 +5866,197 @@ private fun StaffAccountApprovalItemCard(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    if (!staff.isApproved || staff.role != "worker") {
-                        Button(
-                            onClick = onQuickApproveAsWorker,
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = semantic.profitGreen,
-                                contentColor = Color.White
-                            ),
-                            shape = RoundedCornerShape(10.dp),
-                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-                            modifier = Modifier
-                                .height(36.dp)
-                                .testTag("approve_worker_btn_${staff.userId}")
-                        ) {
-                            Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text("موافقة كعامل كاشير", fontSize = 11.5.sp, fontWeight = FontWeight.ExtraBold)
-                        }
-                    }
-
-                    // ONLY the Store Owner (Deffas antar) can promote/approve as Independent Manager
-                    if (isCallerOwner && (!staff.isApproved || staff.role != "manager")) {
-                        Button(
-                            onClick = onQuickApproveAsManager,
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = semantic.infoBlue,
-                                contentColor = Color.White
-                            ),
-                            shape = RoundedCornerShape(10.dp),
-                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-                            modifier = Modifier
-                                .height(36.dp)
-                                .testTag("approve_manager_btn_${staff.userId}")
-                        ) {
-                            Icon(Icons.Default.AdminPanelSettings, contentDescription = null, modifier = Modifier.size(16.dp))
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text("تفعيل كملف مدير مستقل", fontSize = 11.5.sp, fontWeight = FontWeight.ExtraBold)
-                        }
-                    }
-
-                    OutlinedButton(
-                        onClick = onCustomizePermissions,
-                        shape = RoundedCornerShape(10.dp),
-                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-                        modifier = Modifier
-                            .height(36.dp)
-                            .testTag("edit_permissions_btn_${staff.userId}")
-                    ) {
-                        Icon(Icons.Default.Security, contentDescription = null, modifier = Modifier.size(15.dp))
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text("الصلاحيات", fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
-                    }
-
-                    if (!isCurrentUser && !StaffAccountRepository.isOwnerEmail(staff.email)) {
-                        if (staff.approvalStatus == StaffApprovalStatus.PENDING) {
-                            OutlinedButton(
-                                onClick = { onRejectOrSuspend(StaffApprovalStatus.REJECTED) },
-                                colors = ButtonDefaults.outlinedButtonColors(contentColor = semantic.dangerRed),
-                                border = BorderStroke(1.dp, semantic.dangerRed.copy(alpha = 0.5f)),
+                    if (staff.isDeleted) {
+                        if (isCallerOwner) {
+                            Button(
+                                onClick = onQuickApproveAsManager,
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = semantic.profitGreen,
+                                    contentColor = Color.White
+                                ),
                                 shape = RoundedCornerShape(10.dp),
-                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
                                 modifier = Modifier
                                     .height(36.dp)
-                                    .testTag("reject_staff_btn_${staff.userId}")
+                                    .testTag("restore_deleted_manager_btn_${staff.userId}")
                             ) {
-                                Icon(Icons.Default.Block, contentDescription = null, modifier = Modifier.size(15.dp))
+                                Icon(Icons.Default.Restore, contentDescription = null, modifier = Modifier.size(16.dp))
                                 Spacer(modifier = Modifier.width(4.dp))
-                                Text("رفض الطلب", fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+                                Text("استعادة كمدير مستقل", fontSize = 11.5.sp, fontWeight = FontWeight.ExtraBold)
                             }
-                        } else if (staff.approvalStatus == StaffApprovalStatus.APPROVED) {
+                        }
+
+                        OutlinedButton(
+                            onClick = onQuickApproveAsWorker,
+                            shape = RoundedCornerShape(10.dp),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                            modifier = Modifier
+                                .height(36.dp)
+                                .testTag("restore_deleted_worker_btn_${staff.userId}")
+                        ) {
+                            Icon(Icons.Default.Restore, contentDescription = null, modifier = Modifier.size(15.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("استعادة كعامل", fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+                        }
+
+                        OutlinedButton(
+                            onClick = onRequestPurgeFromArchive,
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = semantic.dangerRed),
+                            border = BorderStroke(1.dp, semantic.dangerRed.copy(alpha = 0.65f)),
+                            shape = RoundedCornerShape(10.dp),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                            modifier = Modifier
+                                .height(36.dp)
+                                .testTag("purge_deleted_staff_btn_${staff.userId}")
+                        ) {
+                            Icon(Icons.Default.DeleteForever, contentDescription = null, modifier = Modifier.size(15.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("مسح من السجل نهائياً", fontSize = 11.5.sp, fontWeight = FontWeight.ExtraBold)
+                        }
+                    } else {
+                        if (!staff.isApproved || staff.role != "worker") {
+                            Button(
+                                onClick = onQuickApproveAsWorker,
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = semantic.profitGreen,
+                                    contentColor = Color.White
+                                ),
+                                shape = RoundedCornerShape(10.dp),
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                                modifier = Modifier
+                                    .height(36.dp)
+                                    .testTag("approve_worker_btn_${staff.userId}")
+                            ) {
+                                Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("موافقة كعامل كاشير", fontSize = 11.5.sp, fontWeight = FontWeight.ExtraBold)
+                            }
+                        }
+
+                        // ONLY the Store Owner (Deffas antar) can promote/approve as Independent Manager
+                        if (isCallerOwner && (!staff.isApproved || staff.role != "manager")) {
+                            Button(
+                                onClick = onQuickApproveAsManager,
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = semantic.infoBlue,
+                                    contentColor = Color.White
+                                ),
+                                shape = RoundedCornerShape(10.dp),
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                                modifier = Modifier
+                                    .height(36.dp)
+                                    .testTag("approve_manager_btn_${staff.userId}")
+                            ) {
+                                Icon(Icons.Default.AdminPanelSettings, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    text = if (staff.isTrial && staff.isPending) "قبول تجريبي (7 أيام ⏱)" else "تفعيل كملف مدير مستقل",
+                                    fontSize = 11.5.sp,
+                                    fontWeight = FontWeight.ExtraBold
+                                )
+                            }
+                        }
+
+                        if (isCallerOwner && staff.isTrial && (staff.role == "manager" || staff.requestedRole == "manager")) {
+                            Button(
+                                onClick = onAllowPermanentManager,
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = semantic.profitGreen,
+                                    contentColor = Color.White
+                                ),
+                                shape = RoundedCornerShape(10.dp),
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                                modifier = Modifier
+                                    .height(36.dp)
+                                    .testTag("allow_permanent_manager_btn_${staff.userId}")
+                            ) {
+                                Icon(Icons.Default.CheckCircle, contentDescription = null, modifier = Modifier.size(15.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    text = if (staff.isTrialExpired || staff.approvalStatus == StaffApprovalStatus.SUSPENDED) "سماح بالدخول (دائم ✓)" else "تفعيل دائم ✓",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.ExtraBold
+                                )
+                            }
+
+                            if (!staff.isPending) {
+                                OutlinedButton(
+                                    onClick = onExtendOrApproveTrial7Days,
+                                    shape = RoundedCornerShape(10.dp),
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                                    modifier = Modifier
+                                        .height(36.dp)
+                                        .testTag("extend_trial_manager_btn_${staff.userId}")
+                                ) {
+                                    Icon(Icons.Default.Timer, contentDescription = null, modifier = Modifier.size(15.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("+7 أيام تجربة", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
+
+                        OutlinedButton(
+                            onClick = onCustomizePermissions,
+                            shape = RoundedCornerShape(10.dp),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                            modifier = Modifier
+                                .height(36.dp)
+                                .testTag("edit_permissions_btn_${staff.userId}")
+                        ) {
+                            Icon(Icons.Default.Security, contentDescription = null, modifier = Modifier.size(15.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("الصلاحيات", fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+                        }
+
+                        if (!isCurrentUser && !StaffAccountRepository.isOwnerEmail(staff.email)) {
+                            if (staff.approvalStatus == StaffApprovalStatus.PENDING) {
+                                OutlinedButton(
+                                    onClick = { onRejectOrSuspend(StaffApprovalStatus.REJECTED) },
+                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = semantic.dangerRed),
+                                    border = BorderStroke(1.dp, semantic.dangerRed.copy(alpha = 0.5f)),
+                                    shape = RoundedCornerShape(10.dp),
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                                    modifier = Modifier
+                                        .height(36.dp)
+                                        .testTag("reject_staff_btn_${staff.userId}")
+                                ) {
+                                    Icon(Icons.Default.Block, contentDescription = null, modifier = Modifier.size(15.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("رفض الطلب", fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+                                }
+                            } else if (staff.approvalStatus == StaffApprovalStatus.APPROVED) {
+                                OutlinedButton(
+                                    onClick = { onRejectOrSuspend(StaffApprovalStatus.SUSPENDED) },
+                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = semantic.dangerRed),
+                                    border = BorderStroke(1.dp, semantic.dangerRed.copy(alpha = 0.5f)),
+                                    shape = RoundedCornerShape(10.dp),
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                                    modifier = Modifier
+                                        .height(36.dp)
+                                        .testTag("suspend_staff_btn_${staff.userId}")
+                                ) {
+                                    Icon(Icons.Default.Block, contentDescription = null, modifier = Modifier.size(15.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("إيقاف الدخول", fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+                                }
+                            }
+
                             OutlinedButton(
-                                onClick = { onRejectOrSuspend(StaffApprovalStatus.SUSPENDED) },
-                                colors = ButtonDefaults.outlinedButtonColors(contentColor = semantic.dangerRed),
-                                border = BorderStroke(1.dp, semantic.dangerRed.copy(alpha = 0.5f)),
+                                onClick = onRequestDelete,
+                                colors = ButtonDefaults.outlinedButtonColors(
+                                    containerColor = semantic.dangerRed.copy(alpha = 0.10f),
+                                    contentColor = semantic.dangerRed
+                                ),
+                                border = BorderStroke(1.dp, semantic.dangerRed.copy(alpha = 0.65f)),
                                 shape = RoundedCornerShape(10.dp),
                                 contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
                                 modifier = Modifier
                                     .height(36.dp)
-                                    .testTag("suspend_staff_btn_${staff.userId}")
+                                    .testTag("delete_staff_btn_${staff.userId}")
                             ) {
-                                Icon(Icons.Default.Block, contentDescription = null, modifier = Modifier.size(15.dp))
+                                Icon(Icons.Default.DeleteForever, contentDescription = null, modifier = Modifier.size(15.dp))
                                 Spacer(modifier = Modifier.width(4.dp))
-                                Text("إيقاف الدخول", fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+                                Text("حذف نهائي", fontSize = 11.5.sp, fontWeight = FontWeight.ExtraBold)
                             }
                         }
                     }
@@ -6198,11 +6881,17 @@ fun PendingManagerRequestsDialog(
                                     horizontalArrangement = Arrangement.SpaceBetween,
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Text(
-                                        text = acc.fullName.ifBlank { "مدير بدون اسم" },
-                                        fontWeight = FontWeight.ExtraBold,
-                                        fontSize = 14.sp
-                                    )
+                                    Column(
+                                        modifier = Modifier.weight(1f),
+                                        verticalArrangement = Arrangement.spacedBy(3.dp)
+                                    ) {
+                                        Text(
+                                            text = acc.fullName.ifBlank { "مدير بدون اسم" },
+                                            fontWeight = FontWeight.ExtraBold,
+                                            fontSize = 14.sp
+                                        )
+                                        TrialManagerUnderNameCountdownBadge(account = acc)
+                                    }
                                     if (acc.isTrial) {
                                         Surface(
                                             shape = RoundedCornerShape(6.dp),

@@ -1500,8 +1500,7 @@ private fun ComprehensiveRecordDamagedDialog(
                 val cleanCode = scannedCode.trim()
                 productSearchQuery = cleanCode
                 val exactOrPartialMatch = activeProducts.find {
-                    it.barcode.equals(cleanCode, ignoreCase = true) ||
-                        (it.cartonBarcode.isNotBlank() && it.cartonBarcode.equals(cleanCode, ignoreCase = true))
+                    it.matchesAnyBarcode(cleanCode)
                 } ?: activeProducts.find {
                     it.barcode.contains(cleanCode, ignoreCase = true) ||
                         it.cartonBarcode.contains(cleanCode, ignoreCase = true)
