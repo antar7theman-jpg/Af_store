@@ -561,13 +561,28 @@ abstract class AntarDatabase : RoomDatabase() {
                 )
             )
 
+            val defaultSampleUpdatedAt = 1000L
             if (existingProducts.isEmpty()) {
-                dao.insertProducts(sampleProducts)
+                dao.insertProducts(
+                    sampleProducts.map {
+                        it.copy(
+                            firestoreId = if (it.barcode.isNotBlank()) "bc_${it.barcode}" else "",
+                            updatedAt = defaultSampleUpdatedAt,
+                            syncStatus = com.example.data.models.RecordSyncState.SYNCED
+                        )
+                    }
+                )
             } else if (forceAddMissing) {
                 val currentBarcodes = existingProducts.map { it.barcode }.toSet()
                 val currentNames = existingProducts.map { it.name.trim() }.toSet()
                 val missingProducts = sampleProducts.filter {
                     !currentBarcodes.contains(it.barcode) && !currentNames.contains(it.name.trim())
+                }.map {
+                    it.copy(
+                        firestoreId = if (it.barcode.isNotBlank()) "bc_${it.barcode}" else "",
+                        updatedAt = defaultSampleUpdatedAt,
+                        syncStatus = com.example.data.models.RecordSyncState.SYNCED
+                    )
                 }
                 if (missingProducts.isNotEmpty()) {
                     dao.insertProducts(missingProducts)
@@ -631,11 +646,23 @@ abstract class AntarDatabase : RoomDatabase() {
             )
 
             if (existingCustomers.isEmpty()) {
-                dao.insertCustomers(sampleCustomers)
+                dao.insertCustomers(
+                    sampleCustomers.map {
+                        it.copy(
+                            updatedAt = defaultSampleUpdatedAt,
+                            syncStatus = com.example.data.models.RecordSyncState.SYNCED
+                        )
+                    }
+                )
             } else if (forceAddMissing) {
                 val currentCustomerNames = existingCustomers.map { it.name.trim() }.toSet()
                 val missingCustomers = sampleCustomers.filter {
                     !currentCustomerNames.contains(it.name.trim())
+                }.map {
+                    it.copy(
+                        updatedAt = defaultSampleUpdatedAt,
+                        syncStatus = com.example.data.models.RecordSyncState.SYNCED
+                    )
                 }
                 if (missingCustomers.isNotEmpty()) {
                     dao.insertCustomers(missingCustomers)

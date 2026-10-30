@@ -51,7 +51,6 @@ data class Product(
     var id: Int = 0,
 
     // المعرف التلقائي للوثيقة في Firestore
-    @DocumentId
     @get:PropertyName("firestoreId") @set:PropertyName("firestoreId")
     var firestoreId: String = "",
 

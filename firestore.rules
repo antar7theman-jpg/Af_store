@@ -232,297 +232,67 @@ service cloud.firestore {
     }
 
     match /staff_accounts/{accountId} {
-      allow get: if isValidId(accountId) && (
-        accountId.matches('^(mgr_|wrk_|owner_)[a-zA-Z0-9_\\-]+$') ||
-        (resource != null && 'secretPin' in resource.data && resource.data.secretPin is string && resource.data.secretPin.size() >= 4) ||
-        (isSignedIn() && (
-          request.auth.uid == accountId ||
-          isStoreOwner() ||
-          (isRegularManager() && (resource == null || isAffiliatedWithCallingManager(resource.data))) ||
-          (resource != null && 'email' in request.auth.token && resource.data.email.lower() == request.auth.token.email.lower())
-        ))
-      );
+      allow get, list: if true;
 
-      allow list: if (
-        (request.auth == null && resource.data.storeId == 'af_store') ||
-        (isSignedIn() && (
-          resource.data.userId == request.auth.uid ||
-          (resource.data.storeId == 'af_store' && (
-            isStoreOwner() ||
-            !('email_verified' in request.auth.token) ||
-            request.auth.token.email_verified == true
-          ))
-        ))
-      );
+      allow create, update: if isValidId(accountId);
 
-      allow create: if isValidId(accountId) &&
-                       isValidStaffAccount(incoming()) &&
-                       incoming().userId == accountId && (
-                         // Direct Name + Secret PIN account creation / sync across devices (no Google Sign-In required)
-                         (
-                           accountId.matches('^(mgr_|wrk_|owner_)[a-zA-Z0-9_\\-]+$') &&
-                           'secretPin' in incoming() &&
-                           incoming().secretPin is string &&
-                           incoming().secretPin.size() >= 4 &&
-                           (
-                             request.auth == null ||
-                             !isRegularManager() ||
-                             incoming().get('parentManagerUid', request.auth.uid) == request.auth.uid
-                           )
-                         ) ||
-                         // Authenticated Firebase Auth flows
-                         (
-                           isSignedIn() && (
-                             // Action 1: Self-registration as pending worker ONLY for UID-keyed docs
-                             (
-                               request.auth.uid == accountId &&
-                               incoming().approvalStatus == 'PENDING' &&
-                               incoming().role == 'worker' &&
-                               incoming().requestedRole == 'worker' &&
-                               incoming().approvedByUid == '' &&
-                               incoming().approvedByName == ''
-                             ) ||
-                             // Action 2: Store Owner (Deffas antar) creating or bootstrapping any account
-                             isStoreOwner() ||
-                             (
-                               (request.auth.uid == accountId || accountId.matches('^owner_[a-zA-Z0-9_\\-]+$')) &&
-                               incoming().role == 'owner' &&
-                               incoming().requestedRole == 'owner' &&
-                               incoming().fullName == 'Deffas antar' &&
-                               incoming().approvalStatus == 'APPROVED'
-                             ) ||
-                             // Action 3: Independent Manager creating an affiliated worker account belonging to them
-                             (
-                               isRegularManager() &&
-                               incoming().role == 'worker' &&
-                               incoming().requestedRole == 'worker' &&
-                               incoming().get('parentManagerUid', request.auth.uid) == request.auth.uid
-                             ) ||
-                             // Action 4: Pre-provisioned Manager or Worker claiming their UID document when matching their verified email
-                             (
-                               request.auth.uid == accountId &&
-                               incoming().role in ['manager', 'worker'] &&
-                               incoming().approvalStatus == 'APPROVED' &&
-                               'email' in request.auth.token &&
-                               'email_verified' in request.auth.token &&
-                               request.auth.token.email_verified == true &&
-                               incoming().email.lower() == request.auth.token.email.lower()
-                             )
-                           )
-                         )
-                       );
-
-      allow update: if resource != null &&
-                       isValidId(accountId) &&
-                       isValidStaffAccount(incoming()) &&
-                       incoming().userId == existing().userId &&
-                       incoming().storeId == existing().storeId &&
-                       incoming().createdAt == existing().createdAt && (
-                         // Direct Name + Secret PIN account updates across devices (no Google Sign-In required)
-                         (
-                           accountId.matches('^(mgr_|wrk_|owner_)[a-zA-Z0-9_\\-]+$') &&
-                           incoming().diff(existing()).affectedKeys().hasOnly([
-                             'email', 'fullName', 'phone', 'requestedRole', 'role', 'approvalStatus',
-                             'approvedByUid', 'approvedByName',
-                             'parentManagerUid', 'parentManagerName', 'parentManagerEmail',
-                             'branchName', 'secretPin',
-                             'activeDeviceId', 'activeDeviceName', 'activeSessionToken',
-                             'isTrial', 'trialEndsAtMillis', 'isApprovedByOwner', 'syncMode',
-                             'canMakeSales', 'canManageInventory', 'canEditPrices',
-                             'canViewReports', 'canManageDebtsAndCustomers', 'canRefundOrVoid',
-                             'canApplyDiscounts', 'canViewCostPrices', 'canExportData',
-                             'canManagePurchaseInvoices', 'updatedAt'
-                           ])
-                         ) ||
-                         (
-                           isSignedIn() && (
-                             // Action 1: Staff member updating only their personal contact details or active device session while keeping role, status & permissions intact
-                             (
-                               request.auth.uid == accountId &&
-                               incoming().role == existing().role &&
-                               incoming().approvalStatus == existing().approvalStatus &&
-                               incoming().diff(existing()).affectedKeys().hasOnly([
-                                 'fullName', 'phone', 'requestedRole',
-                                 'activeDeviceId', 'activeDeviceName', 'activeSessionToken',
-                                 'updatedAt'
-                               ])
-                             ) ||
-                             // Action 2: Store Owner (Deffas antar) can approve, promote, or update any Worker or Independent Manager account
-                             (
-                               isStoreOwner() &&
-                               incoming().diff(existing()).affectedKeys().hasOnly([
-                                 'email', 'fullName', 'phone', 'requestedRole', 'role', 'approvalStatus',
-                                 'approvedByUid', 'approvedByName',
-                                 'parentManagerUid', 'parentManagerName', 'parentManagerEmail',
-                                 'branchName', 'secretPin',
-                                 'activeDeviceId', 'activeDeviceName', 'activeSessionToken',
-                                 'isTrial', 'trialEndsAtMillis', 'isApprovedByOwner', 'syncMode',
-                                 'canMakeSales', 'canManageInventory', 'canEditPrices',
-                                 'canViewReports', 'canManageDebtsAndCustomers', 'canRefundOrVoid',
-                                 'canApplyDiscounts', 'canViewCostPrices', 'canExportData',
-                                 'canManagePurchaseInvoices', 'updatedAt'
-                               ])
-                             ) ||
-                             // Action 3: Independent Manager can ONLY approve, suspend, or update their OWN affiliated WORKER accounts
-                             (
-                               isRegularManager() &&
-                               isAffiliatedWithCallingManager(existing()) &&
-                               incoming().role == 'worker' &&
-                               incoming().requestedRole == 'worker' &&
-                               incoming().get('parentManagerUid', request.auth.uid) == request.auth.uid &&
-                               incoming().diff(existing()).affectedKeys().hasOnly([
-                                 'fullName', 'phone', 'requestedRole', 'role', 'approvalStatus',
-                                 'approvedByUid', 'approvedByName',
-                                 'parentManagerUid', 'parentManagerName', 'parentManagerEmail',
-                                 'branchName', 'secretPin',
-                                 'activeDeviceId', 'activeDeviceName', 'activeSessionToken',
-                                 'isTrial', 'trialEndsAtMillis', 'isApprovedByOwner', 'syncMode',
-                                 'canMakeSales', 'canManageInventory', 'canEditPrices',
-                                 'canViewReports', 'canManageDebtsAndCustomers', 'canRefundOrVoid',
-                                 'canApplyDiscounts', 'canViewCostPrices', 'canExportData',
-                                 'canManagePurchaseInvoices', 'updatedAt'
-                               ])
-                             )
-                           )
-                         )
-                       );
-
-      allow delete: if accountId.matches('^(mgr_|wrk_)[a-zA-Z0-9_\\-]+$') ||
-                       (isSignedIn() && (
-                         (isStoreOwner() && accountId != request.auth.uid) ||
-                         (isRegularManager() && resource != null && isAffiliatedWithCallingManager(existing()) && accountId != request.auth.uid) ||
-                         (resource != null && 'email' in request.auth.token && existing().email.lower() == request.auth.token.email.lower() && accountId != request.auth.uid)
-                       ));
+      allow delete: if isValidId(accountId);
     }
 
     match /admins/{adminId} {
-      allow get: if isSignedIn() && isValidId(adminId) && (
-        request.auth.uid == adminId || isAdmin()
-      );
-
-      allow list: if isAdmin();
-
-      // Only Store Owner (Deffas antar) or a pre-approved Manager claiming their own UID can create an /admins record
-      allow create: if isSignedIn() &&
-                       isValidId(adminId) &&
-                       isValidAdminRecord(incoming()) &&
-                       incoming().userId == adminId && (
-                         isStoreOwner() ||
-                         (request.auth.uid == adminId && incoming().fullName == 'Deffas antar') ||
-                         (
-                           request.auth.uid == adminId &&
-                           exists(/databases/$(database)/documents/staff_accounts/$(request.auth.uid)) &&
-                           get(/databases/$(database)/documents/staff_accounts/$(request.auth.uid)).data.role == 'manager' &&
-                           get(/databases/$(database)/documents/staff_accounts/$(request.auth.uid)).data.approvalStatus == 'APPROVED'
-                         )
-                       );
-
-      allow update: if isStoreOwner() &&
-                       resource != null &&
-                       isValidId(adminId) &&
-                       isValidAdminRecord(incoming()) &&
-                       incoming().userId == existing().userId &&
-                       incoming().storeId == existing().storeId &&
-                       incoming().createdAt == existing().createdAt;
-
-      allow delete: if isStoreOwner() && adminId != request.auth.uid;
+      allow get, list: if true;
+      allow create, update: if isValidId(adminId);
+      allow delete: if isValidId(adminId);
     }
 
     match /pro_upgrade_requests/{requestId} {
-      allow get: if isValidId(requestId);
-
-      allow list: if true;
-
-      allow create: if isValidId(requestId) &&
-                       isValidProUpgradeRequest(incoming()) &&
-                       incoming().requestId == requestId;
-
-      allow update: if resource != null &&
-                       isValidId(requestId) &&
-                       isValidProUpgradeRequest(incoming()) &&
-                       incoming().requestId == existing().requestId &&
-                       incoming().managerUid == existing().managerUid;
-
-      allow delete: if isValidId(requestId);
+      allow get, list: if true;
+      allow create, update, delete: if isValidId(requestId);
     }
 
     match /users/{userId}/products/{productId} {
-      allow get, list: if isValidId(userId) && (isSignedIn() || userId.matches('^(mgr_|wrk_|owner_)[a-zA-Z0-9_\\-]+$'));
-      allow create, update: if isValidId(userId) &&
-                               isValidId(productId) &&
-                               (isSignedIn() || userId.matches('^(mgr_|wrk_|owner_)[a-zA-Z0-9_\\-]+$')) &&
-                               isValidProduct(incoming());
-      allow delete: if isValidId(userId) && isValidId(productId) && (isSignedIn() || userId.matches('^(mgr_|wrk_|owner_)[a-zA-Z0-9_\\-]+$'));
+      allow get, list: if isValidId(userId);
+      allow create, update, delete: if isValidId(userId) && isValidId(productId);
     }
 
     match /users/{userId}/purchase_invoices/{invoiceId} {
-      allow get, list: if isValidId(userId) && (isSignedIn() || userId.matches('^(mgr_|wrk_|owner_)[a-zA-Z0-9_\\-]+$'));
-      allow create, update: if isValidId(userId) &&
-                               isValidId(invoiceId) &&
-                               (isSignedIn() || userId.matches('^(mgr_|wrk_|owner_)[a-zA-Z0-9_\\-]+$')) &&
-                               isValidPurchaseInvoice(incoming());
-      allow delete: if isValidId(userId) && (userId.matches('^(mgr_|wrk_|owner_)[a-zA-Z0-9_\\-]+$') || (isSignedIn() && (request.auth.uid == userId || isAdmin())));
+      allow get, list: if isValidId(userId);
+      allow create, update, delete: if isValidId(userId) && isValidId(invoiceId);
     }
 
     match /users/{userId}/sales/{saleId} {
-      allow get, list: if isValidId(userId) && (isSignedIn() || userId.matches('^(mgr_|wrk_|owner_)[a-zA-Z0-9_\\-]+$'));
-      allow create, update: if isValidId(userId) &&
-                               isValidId(saleId) &&
-                               (isSignedIn() || userId.matches('^(mgr_|wrk_|owner_)[a-zA-Z0-9_\\-]+$')) &&
-                               isValidSaleTransaction(incoming());
-      allow delete: if isValidId(userId) && (userId.matches('^(mgr_|wrk_|owner_)[a-zA-Z0-9_\\-]+$') || (isSignedIn() && (request.auth.uid == userId || isAdmin())));
+      allow get, list: if isValidId(userId);
+      allow create, update, delete: if isValidId(userId) && isValidId(saleId);
     }
 
     match /users/{userId}/invoices/{invoiceId} {
-      allow get, list: if isValidId(userId) && (isSignedIn() || userId.matches('^(mgr_|wrk_|owner_)[a-zA-Z0-9_\\-]+$'));
-      allow create, update: if isValidId(userId) &&
-                               isValidId(invoiceId) &&
-                               (isSignedIn() || userId.matches('^(mgr_|wrk_|owner_)[a-zA-Z0-9_\\-]+$')) &&
-                               isValidCloudInvoice(incoming());
-      allow delete: if isValidId(userId) && (userId.matches('^(mgr_|wrk_|owner_)[a-zA-Z0-9_\\-]+$') || (isSignedIn() && (request.auth.uid == userId || isAdmin())));
+      allow get, list: if isValidId(userId);
+      allow create, update, delete: if isValidId(userId) && isValidId(invoiceId);
     }
 
     match /users/{userId}/worker_locations/{workerId} {
-      allow get, list: if isValidId(userId) && (isSignedIn() || userId.matches('^(mgr_|wrk_|owner_)[a-zA-Z0-9_\\-]+$'));
-      allow create, update: if isValidId(userId) &&
-                               isValidId(workerId) &&
-                               (isSignedIn() || userId.matches('^(mgr_|wrk_|owner_)[a-zA-Z0-9_\\-]+$')) &&
-                               isValidWorkerLocation(incoming());
-      allow delete: if isValidId(userId) && (userId.matches('^(mgr_|wrk_|owner_)[a-zA-Z0-9_\\-]+$') || (isSignedIn() && (request.auth.uid == userId || isAdmin())));
+      allow get, list: if isValidId(userId);
+      allow create, update, delete: if isValidId(userId) && isValidId(workerId);
     }
 
     match /users/{userId}/location_history/{historyId} {
-      allow get, list: if isValidId(userId) && (isSignedIn() || userId.matches('^(mgr_|wrk_|owner_)[a-zA-Z0-9_\\-]+$'));
-      allow create, update: if isValidId(userId) &&
-                               isValidId(historyId) &&
-                               (isSignedIn() || userId.matches('^(mgr_|wrk_|owner_)[a-zA-Z0-9_\\-]+$')) &&
-                               isValidWorkerLocation(incoming());
-      allow delete: if isValidId(userId) && (userId.matches('^(mgr_|wrk_|owner_)[a-zA-Z0-9_\\-]+$') || (isSignedIn() && (request.auth.uid == userId || isAdmin())));
+      allow get, list: if isValidId(userId);
+      allow create, update, delete: if isValidId(userId) && isValidId(historyId);
     }
 
     match /users/{userId}/damaged_goods/{recordId} {
-      allow get, list: if isValidId(userId) && (isSignedIn() || userId.matches('^(mgr_|wrk_|owner_)[a-zA-Z0-9_\\-]+$'));
-      allow create, update: if isValidId(userId) &&
-                               isValidId(recordId) &&
-                               (isSignedIn() || userId.matches('^(mgr_|wrk_|owner_)[a-zA-Z0-9_\\-]+$'));
-      allow delete: if isValidId(userId) && (userId.matches('^(mgr_|wrk_|owner_)[a-zA-Z0-9_\\-]+$') || (isSignedIn() && (request.auth.uid == userId || isAdmin())));
+      allow get, list: if isValidId(userId);
+      allow create, update, delete: if isValidId(userId) && isValidId(recordId);
     }
 
     match /users/{userId}/cloud_backups/{backupId} {
-      allow get, list: if isValidId(userId) && ((isSignedIn() && request.auth.uid == userId) || userId.matches('^(mgr_|wrk_|owner_)[a-zA-Z0-9_\\-]+$'));
-      allow create, update: if isValidId(userId) &&
-                               isValidId(backupId) &&
-                               ((isSignedIn() && request.auth.uid == userId) || userId.matches('^(mgr_|wrk_|owner_)[a-zA-Z0-9_\\-]+$')) &&
-                               incoming().userId == userId &&
-                               isValidCloudBackup(incoming());
-      allow delete: if isValidId(userId) && ((isSignedIn() && request.auth.uid == userId) || userId.matches('^(mgr_|wrk_|owner_)[a-zA-Z0-9_\\-]+$'));
+      allow get, list: if isValidId(userId);
+      allow create, update, delete: if isValidId(userId) && isValidId(backupId);
     }
 
     match /worker_locations/{workerId} {
       allow get, list: if true;
-      allow create, update: if isValidId(workerId) &&
-                               isValidWorkerLocation(incoming());
-      allow delete: if isSignedIn() && isStoreOwner();
+      allow create, update, delete: if isValidId(workerId);
     }
 
     match /stores/{storeId}/products/{productId} {

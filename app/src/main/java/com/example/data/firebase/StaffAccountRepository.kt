@@ -1095,7 +1095,33 @@ class StaffAccountRepository(
             val localDeviceId = getOrCreateDeviceId(context)
             val localDeviceName = getDeviceModelName()
             val sessionToken = java.util.UUID.randomUUID().toString()
+
+            val canonicalUserId = when {
+                targetAccount.isOwner -> "owner_deffas_antar"
+                (targetAccount.role == "manager" || targetAccount.role == "admin") && targetAccount.fullName.isNotBlank() ->
+                    managerPreProvisionDocId(targetAccount.fullName)
+                else -> targetAccount.userId
+            }
+            val canonicalParentManagerUid = when {
+                targetAccount.role == "worker" && !targetAccount.isOwner -> {
+                    when {
+                        targetAccount.parentManagerName.isNotBlank() &&
+                            !isOwnerIdentity(targetAccount.parentManagerName) ->
+                            managerPreProvisionDocId(targetAccount.parentManagerName)
+                        targetAccount.parentManagerUid.isNotBlank() -> targetAccount.parentManagerUid
+                        targetAccount.approvedByName.isNotBlank() &&
+                            !isOwnerIdentity(targetAccount.approvedByName) ->
+                            managerPreProvisionDocId(targetAccount.approvedByName)
+                        targetAccount.approvedByUid.isNotBlank() -> targetAccount.approvedByUid
+                        else -> "owner_deffas_antar"
+                    }
+                }
+                else -> targetAccount.parentManagerUid
+            }
+
             val sessionAccount = targetAccount.copy(
+                userId = canonicalUserId,
+                parentManagerUid = canonicalParentManagerUid,
                 activeDeviceId = localDeviceId,
                 activeDeviceName = localDeviceName,
                 activeSessionToken = sessionToken
@@ -1107,6 +1133,7 @@ class StaffAccountRepository(
             // Register active device on Firestore in background so login is instantaneous
             CoroutineScope(Dispatchers.IO).launch {
                 runCatching {
+                    syncAccountToFirestore(sessionAccount)
                     updateActiveDeviceSessionInFirestore(sessionAccount, localDeviceId, localDeviceName, sessionToken)
                 }
             }
@@ -2130,7 +2157,7 @@ class StaffAccountRepository(
             return Result.failure(IllegalArgumentException("يرجى إدخال الاسم الكامل للمدير المستقل"))
         }
         val cleanEmail = normalizeStaffInternalEmail(managerEmail.ifBlank { cleanName }, "mgr")
-        val docId = managerPreProvisionDocId(if (managerEmail.contains("@")) cleanEmail else cleanName)
+        val docId = managerPreProvisionDocId(cleanName)
 
         // Ensure Firebase cloud channel is connected if appContext is available
         try {
@@ -2205,11 +2232,11 @@ class StaffAccountRepository(
         )
         return try {
             staffRef.set(payload).await()
-            // Also write a mirror doc under mgr_<cleanName> if managerEmail was provided so Name + PIN lookup is instant
-            val nameDocId = managerPreProvisionDocId(cleanName)
-            if (nameDocId != docId) {
+            // Also write a mirror doc under mgr_<cleanEmail> if managerEmail was provided, keeping userId = docId so both point to the same canonical inventory!
+            val emailDocId = managerPreProvisionDocId(cleanEmail)
+            if (emailDocId != docId) {
                 runCatching {
-                    db.collection(COLLECTION_STAFF).document(nameDocId).set(payload + ("userId" to nameDocId)).await()
+                    db.collection(COLLECTION_STAFF).document(emailDocId).set(payload).await()
                 }
             }
             Result.success(createdAccount)
@@ -2268,8 +2295,14 @@ class StaffAccountRepository(
         }
 
         val docId = workerPreProvisionDocId(if (workerEmail.contains("@")) cleanEmail else cleanName)
-        val effectiveManagerUid = managerAccount.userId.ifBlank { auth.currentUser?.uid ?: "manager_independent" }
         val effectiveManagerName = managerAccount.fullName.ifBlank { "مدير مستقل" }.take(100)
+        val effectiveManagerUid = when {
+            managerAccount.isOwner -> "owner_deffas_antar"
+            effectiveManagerName.isNotBlank() && effectiveManagerName != "مدير مستقل" ->
+                managerPreProvisionDocId(effectiveManagerName)
+            managerAccount.userId.isNotBlank() -> managerAccount.userId
+            else -> "manager_independent"
+        }
         val effectiveManagerEmail = managerAccount.email.take(150)
         val effectiveBranch = managerAccount.branchName.ifBlank { "فرع $effectiveManagerName" }.take(100)
 
@@ -2337,6 +2370,12 @@ class StaffAccountRepository(
         )
         return try {
             staffRef.set(payload).await()
+            val nameDocId = workerPreProvisionDocId(cleanName)
+            if (nameDocId != docId) {
+                runCatching {
+                    db.collection(COLLECTION_STAFF).document(nameDocId).set(payload).await()
+                }
+            }
             Result.success(createdWorker)
         } catch (e: Exception) {
             handleFirestoreError(e, OperationType.CREATE, staffRef.path)
@@ -2382,7 +2421,14 @@ class StaffAccountRepository(
         callerAccount: StaffAccount? = null,
         syncMode: String = "pro"
     ): Result<Unit> {
-        val managerUid = auth.currentUser?.uid ?: callerAccount?.userId ?: "owner_deffas_antar"
+        val managerUid = when {
+            isCallerOwner -> "owner_deffas_antar"
+            callerAccount != null && callerAccount.fullName.isNotBlank() ->
+                managerPreProvisionDocId(callerAccount.fullName)
+            callerAccount != null && callerAccount.userId.isNotBlank() -> callerAccount.userId
+            managerName.trim().isNotBlank() -> managerPreProvisionDocId(managerName.trim())
+            else -> "owner_deffas_antar"
+        }
         val involvesManagerRole = newRole in listOf("manager", "admin", "owner") ||
             targetAccount.role in listOf("manager", "admin", "owner")
 

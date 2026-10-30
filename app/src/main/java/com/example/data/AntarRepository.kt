@@ -584,34 +584,104 @@ class AntarRepository(private val dao: StoreDao) {
         }
     }
 
+    suspend fun updateProductFirestoreIdAndSyncStatus(
+        productId: Int,
+        firestoreId: String,
+        status: String = RecordSyncState.SYNCED
+    ) {
+        if (productId > 0 && firestoreId.isNotBlank()) {
+            dao.updateProductFirestoreIdAndSyncStatus(productId, firestoreId, status)
+        }
+    }
+
     suspend fun mergeRemoteProductsWithTimestampResolution(remoteProducts: List<Product>): Int {
         if (remoteProducts.isEmpty()) return 0
         val allLocal = dao.getAllProductsOnce()
-        val localById = allLocal.associateBy { it.id }
-        val localByFirestoreId = allLocal.filter { it.firestoreId.isNotBlank() }.associateBy { it.firestoreId }
-        val localByBarcode = allLocal.filter { it.barcode.isNotBlank() }.associateBy { it.barcode.trim().lowercase() }
+        val localById = allLocal.associateBy { it.id }.toMutableMap()
+        val localByFirestoreId = allLocal.filter { it.firestoreId.isNotBlank() }.associateBy { it.firestoreId }.toMutableMap()
+        val localByBarcode = allLocal.filter { it.barcode.isNotBlank() }.associateBy { it.barcode.trim().lowercase() }.toMutableMap()
+        val localByCartonBarcode = allLocal.filter { it.cartonBarcode.isNotBlank() }.associateBy { it.cartonBarcode.trim().lowercase() }.toMutableMap()
+        val localByName = allLocal.filter { it.name.isNotBlank() }.associateBy { it.name.trim().lowercase() }.toMutableMap()
         val toSave = mutableListOf<Product>()
 
         for (remote in remoteProducts) {
-            val local = (if (remote.firestoreId.isNotBlank()) localByFirestoreId[remote.firestoreId] else null)
-                ?: (if (remote.barcode.isNotBlank()) localByBarcode[remote.barcode.trim().lowercase()] else null)
-                ?: (if (remote.id > 0) localById[remote.id] else null)
+            val remoteFsId = remote.firestoreId.trim()
+            val remoteBarcode = remote.barcode.trim().lowercase()
+            val remoteCartonBarcode = remote.cartonBarcode.trim().lowercase()
+            val remoteName = remote.name.trim().lowercase()
+
+            // Try matching existing local product by firestoreId -> barcode -> cartonBarcode -> name -> (id if same name or partial stock update)
+            val local = (if (remoteFsId.isNotBlank()) localByFirestoreId[remoteFsId] else null)
+                ?: (if (remoteBarcode.isNotBlank()) localByBarcode[remoteBarcode] else null)
+                ?: (if (remoteCartonBarcode.isNotBlank()) localByCartonBarcode[remoteCartonBarcode] else null)
+                ?: (if (remoteName.isNotBlank()) localByName[remoteName] else null)
+                ?: run {
+                    // Check if remoteFsId is "pid_<id>" or remote.id > 0
+                    val pidFromFsId = if (remoteFsId.startsWith("pid_")) remoteFsId.removePrefix("pid_").toIntOrNull() else null
+                    val candidateId = if (remote.id > 0) remote.id else (pidFromFsId ?: 0)
+                    val candidateLocal = if (candidateId > 0) localById[candidateId] else null
+                    if (candidateLocal != null && (remoteName.isBlank() || candidateLocal.name.trim().equals(remote.name.trim(), ignoreCase = true))) {
+                        candidateLocal
+                    } else {
+                        null
+                    }
+                }
 
             if (local == null) {
-                toSave.add(remote.copy(syncStatus = RecordSyncState.SYNCED))
+                // Only insert a brand-new product if it actually has a valid name (ignore orphan stock-only partial docs)
+                if (remote.name.isNotBlank() && !remote.isDeleted) {
+                    val assignedId = if (remote.id > 0 && !localById.containsKey(remote.id)) remote.id else 0
+                    val computedFsId = remoteFsId.ifBlank {
+                        when {
+                            remote.barcode.isNotBlank() -> "bc_${remote.barcode.trim().replace(Regex("[^a-zA-Z0-9]"), "_")}"
+                            assignedId > 0 -> "pid_$assignedId"
+                            else -> "p_${remote.name.trim().hashCode().toUInt()}"
+                        }
+                    }
+                    val newProduct = remote.copy(
+                        id = assignedId,
+                        firestoreId = computedFsId,
+                        updatedAt = if (remote.updatedAt > 0L) remote.updatedAt else System.currentTimeMillis(),
+                        syncStatus = RecordSyncState.SYNCED
+                    )
+                    toSave.add(newProduct)
+                }
             } else {
-                val isLocalPendingNewer = local.syncStatus != RecordSyncState.SYNCED && local.updatedAt > remote.updatedAt
+                val isSeedSample = local.firestoreId.isBlank() && local.barcode.startsWith("6281000001")
+                val isLocalPendingNewer = !isSeedSample &&
+                    local.syncStatus != RecordSyncState.SYNCED &&
+                    local.updatedAt > 1000L &&
+                    remote.updatedAt > 0L &&
+                    local.updatedAt > remote.updatedAt
                 if (!isLocalPendingNewer) {
-                    val resolvedUpdatedAt = maxOf(remote.updatedAt, local.updatedAt)
-                    toSave.add(
+                    val resolvedUpdatedAt = maxOf(remote.updatedAt, local.updatedAt, 1001L)
+                    // If remote is a partial stock-only document (name is blank), only update stock/isDeleted/firestoreId on local
+                    val mergedProduct = if (remote.name.isBlank()) {
+                        local.copy(
+                            stock = remote.stock,
+                            firestoreId = remoteFsId.ifBlank { local.firestoreId },
+                            isDeleted = remote.isDeleted || local.isDeleted,
+                            updatedAt = resolvedUpdatedAt,
+                            syncStatus = RecordSyncState.SYNCED
+                        )
+                    } else {
                         remote.copy(
                             id = local.id,
-                            firestoreId = remote.firestoreId.ifBlank { local.firestoreId },
+                            name = remote.name.ifBlank { local.name },
+                            price = if (remote.price > 0.0) remote.price else local.price,
+                            purchasePrice = if (remote.purchasePrice > 0.0) remote.purchasePrice else local.purchasePrice,
+                            unitsPerCarton = if (remote.unitsPerCarton > 0) remote.unitsPerCarton else local.unitsPerCarton,
+                            barcode = remote.barcode.ifBlank { local.barcode },
+                            cartonBarcode = remote.cartonBarcode.ifBlank { local.cartonBarcode },
+                            category = remote.category.ifBlank { local.category },
+                            firestoreId = remoteFsId.ifBlank { local.firestoreId },
+                            imageUrl = remote.imageUrl.ifBlank { local.imageUrl },
                             imagePath = remote.imagePath.ifBlank { local.imagePath },
                             updatedAt = resolvedUpdatedAt,
                             syncStatus = RecordSyncState.SYNCED
                         )
-                    )
+                    }
+                    toSave.add(mergedProduct)
                 }
             }
         }

@@ -54,8 +54,15 @@ class LiveInventorySyncManager(
 
         fun getInventoryDocId(product: Product): String {
             return when {
-                product.firestoreId.isNotBlank() -> product.firestoreId
-                product.barcode.isNotBlank() -> "bc_${product.barcode.trim().replace(Regex("[^a-zA-Z0-9]"), "_")}"
+                product.firestoreId.isNotBlank() && product.firestoreId.matches(Regex("^[a-zA-Z0-9_\\-]+$")) -> product.firestoreId
+                product.barcode.isNotBlank() -> "bc_${product.barcode.trim().replace(Regex("[^a-zA-Z0-9_\\-]"), "_")}"
+                product.cartonBarcode.isNotBlank() -> "cbc_${product.cartonBarcode.trim().replace(Regex("[^a-zA-Z0-9_\\-]"), "_")}"
+                product.name.isNotBlank() -> {
+                    val normalizedName = product.name.trim().lowercase().replace(Regex("\\s+"), " ")
+                    val asciiPart = normalizedName.replace(Regex("[^a-z0-9]"), "_").trim('_').take(32)
+                    val nameHash = normalizedName.hashCode().toUInt().toString(16)
+                    if (asciiPart.isNotBlank()) "pn_${asciiPart}_$nameHash" else "pn_$nameHash"
+                }
                 product.id > 0 -> "pid_${product.id}"
                 else -> "p_${System.currentTimeMillis()}"
             }
@@ -80,6 +87,7 @@ class LiveInventorySyncManager(
     }
 
     private var productsListenerRegistration: ListenerRegistration? = null
+    private val extraProductsListeners = mutableListOf<ListenerRegistration>()
     private var invoicesListenerRegistration: ListenerRegistration? = null
     private var purchaseInvoicesListenerRegistration: ListenerRegistration? = null
     private var locationsListenerRegistration: ListenerRegistration? = null
@@ -127,6 +135,68 @@ class LiveInventorySyncManager(
         val resultingStock: Int
     )
 
+    private fun parseProductDocument(doc: com.google.firebase.firestore.DocumentSnapshot): Product? {
+        if (!doc.exists()) return null
+        return try {
+            val data = doc.data ?: return null
+            val name = (data["name"] as? String)?.trim() ?: ""
+            val barcode = (data["barcode"] as? String)?.trim() ?: ""
+            val cartonBarcode = (data["cartonBarcode"] as? String)?.trim() ?: ""
+            val firestoreId = ((data["firestoreId"] as? String)?.trim()?.takeIf { it.isNotBlank() } ?: doc.id)
+            val id = (data["id"] as? Number)?.toInt() ?: 0
+            val purchasePrice = (data["purchasePrice"] as? Number)?.toDouble() ?: 0.0
+            val price = (data["price"] as? Number)?.toDouble()
+                ?: (data["salePrice"] as? Number)?.toDouble()
+                ?: 0.0
+            val stock = (data["stock"] as? Number)?.toInt()
+                ?: (data["quantityInUnits"] as? Number)?.toInt()
+                ?: 0
+            val unitsPerCarton = ((data["unitsPerCarton"] as? Number)?.toInt() ?: 1).coerceAtLeast(1)
+            val category = (data["category"] as? String)?.trim()?.ifBlank { "عام" } ?: "عام"
+            val minStockAlert = (data["minStockAlert"] as? Number)?.toInt()
+                ?: (data["minStockThreshold"] as? Number)?.toInt()
+                ?: 5
+            val imagePath = (data["imagePath"] as? String) ?: ""
+            val imageUrl = (data["imageUrl"] as? String) ?: ""
+            val isDeleted = (data["isDeleted"] as? Boolean) ?: false
+            val updatedAt = (data["updatedAt"] as? Number)?.toLong()
+                ?: doc.getTimestamp("serverUpdatedAt")?.toDate()?.time
+                ?: System.currentTimeMillis()
+
+            if (name.isBlank() && barcode.isBlank() && id <= 0 && !data.containsKey("stock")) {
+                return null
+            }
+
+            Product(
+                id = id,
+                firestoreId = firestoreId,
+                name = name,
+                purchasePrice = purchasePrice,
+                price = price,
+                stock = stock,
+                unitsPerCarton = unitsPerCarton,
+                barcode = barcode,
+                cartonBarcode = cartonBarcode,
+                category = category,
+                minStockAlert = minStockAlert,
+                imagePath = imagePath,
+                imageUrl = imageUrl,
+                isDeleted = isDeleted,
+                updatedAt = updatedAt,
+                syncStatus = RecordSyncState.SYNCED
+            )
+        } catch (e: Exception) {
+            Log.w(TAG, "Fallback parseProductDocument error for ${doc.id}: ${e.message}")
+            try {
+                doc.toObject(Product::class.java)?.apply {
+                    if (firestoreId.isBlank()) firestoreId = doc.id
+                }
+            } catch (_: Exception) {
+                null
+            }
+        }
+    }
+
     /**
      * استخراج المعرف السحابي المشترك لمخزون المدير التابع له العامل.
      */
@@ -139,20 +209,80 @@ class LiveInventorySyncManager(
             return auth.currentUser?.uid ?: ""
         }
         return when {
-            activeAccount.isRegularManager -> activeAccount.userId
-            activeAccount.role.equals("worker", ignoreCase = true) && activeAccount.parentManagerUid.isNotBlank() -> {
-                activeAccount.parentManagerUid
+            activeAccount.isOwner -> {
+                activeAccount.userId.ifBlank { "owner_deffas_antar" }
             }
-            activeAccount.role.equals("worker", ignoreCase = true) && activeAccount.approvedByUid.isNotBlank() -> {
-                activeAccount.approvedByUid
+            activeAccount.isRegularManager -> {
+                if (activeAccount.fullName.isNotBlank()) {
+                    StaffAccountRepository.managerPreProvisionDocId(activeAccount.fullName)
+                } else {
+                    activeAccount.userId
+                }
             }
-            activeAccount.isOwner -> activeAccount.userId.ifBlank { auth.currentUser?.uid ?: "owner_deffas_antar" }
+            activeAccount.role.equals("worker", ignoreCase = true) -> {
+                val managerName = activeAccount.parentManagerName.trim().ifBlank {
+                    activeAccount.approvedByName.trim()
+                }
+                val isUnderOwner = managerName.equals(StaffAccountRepository.OWNER_FULL_NAME, ignoreCase = true) ||
+                    activeAccount.parentManagerUid.startsWith("owner_", ignoreCase = true)
+                when {
+                    isUnderOwner -> activeAccount.parentManagerUid.ifBlank { "owner_deffas_antar" }
+                    managerName.isNotBlank() -> StaffAccountRepository.managerPreProvisionDocId(managerName)
+                    activeAccount.parentManagerUid.isNotBlank() -> activeAccount.parentManagerUid
+                    activeAccount.approvedByUid.isNotBlank() -> activeAccount.approvedByUid
+                    else -> activeAccount.userId
+                }
+            }
             else -> activeAccount.parentManagerUid.ifBlank {
                 activeAccount.approvedByUid.ifBlank {
                     activeAccount.userId.ifBlank { auth.currentUser?.uid ?: "" }
                 }
             }
         }
+    }
+
+    /**
+     * استخراج جميع المعرفات السحابية المحتملة لمخزون المدير (المعرف القياسي بالاسم + المعرفات السابقة بالإيميل أو UID)
+     * لضمان التوافق الفوري بين الأجهزة حتى للحسابات المفتوحة مسبقاً.
+     */
+    fun resolveAllCandidateInventoryOwnerUids(activeAccount: StaffAccount?): List<String> {
+        val acct = activeAccount ?: StaffAccountRepository.loadPersistentStaffSession(context)
+            ?: return listOfNotNull(auth.currentUser?.uid?.takeIf { it.isNotBlank() })
+        val primary = resolveInventoryOwnerUid(acct)
+        val candidates = LinkedHashSet<String>()
+        if (primary.isNotBlank()) candidates.add(primary)
+
+        if (acct.isOwner) {
+            candidates.add("owner_deffas_antar")
+            if (acct.userId.isNotBlank()) candidates.add(acct.userId)
+        } else if (acct.isRegularManager) {
+            if (acct.fullName.isNotBlank()) {
+                candidates.add(StaffAccountRepository.managerPreProvisionDocId(acct.fullName))
+            }
+            if (acct.userId.isNotBlank()) {
+                candidates.add(acct.userId)
+            }
+            if (acct.email.isNotBlank() && !acct.email.endsWith("@afstore.local", ignoreCase = true)) {
+                candidates.add(StaffAccountRepository.managerPreProvisionDocId(acct.email))
+            }
+        } else if (acct.role.equals("worker", ignoreCase = true)) {
+            if (acct.parentManagerName.isNotBlank() && !acct.parentManagerName.equals(StaffAccountRepository.OWNER_FULL_NAME, ignoreCase = true)) {
+                candidates.add(StaffAccountRepository.managerPreProvisionDocId(acct.parentManagerName))
+            }
+            if (acct.parentManagerUid.isNotBlank()) {
+                candidates.add(acct.parentManagerUid)
+            }
+            if (acct.parentManagerEmail.isNotBlank() && !acct.parentManagerEmail.endsWith("@afstore.local", ignoreCase = true)) {
+                candidates.add(StaffAccountRepository.managerPreProvisionDocId(acct.parentManagerEmail))
+            }
+            if (acct.approvedByName.isNotBlank() && !acct.approvedByName.equals(StaffAccountRepository.OWNER_FULL_NAME, ignoreCase = true)) {
+                candidates.add(StaffAccountRepository.managerPreProvisionDocId(acct.approvedByName))
+            }
+            if (acct.approvedByUid.isNotBlank()) {
+                candidates.add(acct.approvedByUid)
+            }
+        }
+        return candidates.filter { it.isNotBlank() && it.matches(Regex("^[a-zA-Z0-9_\\-]+$")) }
     }
 
     /**
@@ -185,47 +315,103 @@ class LiveInventorySyncManager(
         currentOwnerUid = targetOwnerUid
         _isLiveSyncActive.value = true
 
-        Log.i(TAG, "بدء مراقبة المخزون اللحظي للمدير: $targetOwnerUid لحساب: ${activeAccount.fullName} (${activeAccount.role})")
+        val candidateUids = resolveAllCandidateInventoryOwnerUids(activeAccount).ifEmpty { listOf(targetOwnerUid) }
+        Log.i(TAG, "بدء مراقبة المخزون اللحظي للمدير: $candidateUids لحساب: ${activeAccount.fullName} (${activeAccount.role})")
 
-        val productsCollection = db.collection("users").document(targetOwnerUid).collection("products")
-
-        // Immediate one-shot pull for worker / manager upon opening session
+        // Immediate one-shot pull & initial reconciliation for worker / manager upon opening session
         scope.launch(Dispatchers.IO) {
             try {
-                val oneShotSnap = productsCollection.get().await()
-                if (!oneShotSnap.isEmpty) {
-                    val remoteProducts = mutableListOf<Product>()
-                    for (doc in oneShotSnap.documents) {
-                        val prod = doc.toObject(Product::class.java)
-                        if (prod != null) {
-                            if (prod.firestoreId.isBlank()) {
-                                prod.firestoreId = doc.id
+                val allCandidateUids = LinkedHashSet<String>(candidateUids)
+                // If worker's parentManagerEmail or parentManagerName was updated on cloud, also discover manager email/name from staff_accounts
+                if (activeAccount.role.equals("worker", ignoreCase = true)) {
+                    try {
+                        val workerDocId = if (activeAccount.fullName.isNotBlank()) {
+                            StaffAccountRepository.workerPreProvisionDocId(activeAccount.fullName)
+                        } else {
+                            activeAccount.userId
+                        }
+                        val workerDoc = db.collection("staff_accounts").document(workerDocId).get().await()
+                        if (workerDoc.exists()) {
+                            val pUid = workerDoc.getString("parentManagerUid")?.trim().orEmpty()
+                            val pName = workerDoc.getString("parentManagerName")?.trim().orEmpty()
+                            val pEmail = workerDoc.getString("parentManagerEmail")?.trim().orEmpty()
+                            if (pName.isNotBlank() && !pName.equals(StaffAccountRepository.OWNER_FULL_NAME, ignoreCase = true)) {
+                                allCandidateUids.add(StaffAccountRepository.managerPreProvisionDocId(pName))
                             }
+                            if (pUid.isNotBlank()) allCandidateUids.add(pUid)
+                            if (pEmail.isNotBlank() && !pEmail.endsWith("@afstore.local", ignoreCase = true)) {
+                                allCandidateUids.add(StaffAccountRepository.managerPreProvisionDocId(pEmail))
+                            }
+                        }
+                    } catch (_: Exception) { }
+                }
+
+                val remoteProductsByDocId = LinkedHashMap<String, Product>()
+                for (uid in allCandidateUids) {
+                    try {
+                        val snap = db.collection("users").document(uid).collection("products").get().await()
+                        for (doc in snap.documents) {
+                            val prod = parseProductDocument(doc) ?: continue
                             val resolvedImagePath = ProductCloudImageHelper.ensureLocalProductImage(context, prod)
                             if (resolvedImagePath.isNotBlank()) {
                                 prod.imagePath = resolvedImagePath
                             }
-                            remoteProducts.add(prod)
+                            val existing = remoteProductsByDocId[doc.id]
+                            if (existing == null || prod.updatedAt >= existing.updatedAt) {
+                                remoteProductsByDocId[doc.id] = prod
+                            }
                         }
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Failed pulling products from candidate UID $uid: ${e.message}")
                     }
-                    if (remoteProducts.isNotEmpty()) {
-                        val mergedCount = repository.mergeRemoteProductsWithTimestampResolution(remoteProducts)
-                        _syncedProductsCount.value = remoteProducts.size
-                        _lastSyncTimestamp.value = System.currentTimeMillis()
-                        val feedback = "تم تحميل وتحديث $mergedCount صنفاً من مخزون المدير محلياً في Room ✓"
-                        _syncMessage.value = feedback
-                        withContext(Dispatchers.Main) {
-                            onStatusMessage(feedback)
+                }
+
+                val remoteProducts = remoteProductsByDocId.values.toList()
+                if (remoteProducts.isNotEmpty()) {
+                    val mergedCount = repository.mergeRemoteProductsWithTimestampResolution(remoteProducts)
+                    _syncedProductsCount.value = remoteProducts.size
+                    _lastSyncTimestamp.value = System.currentTimeMillis()
+                    val feedback = "تم تحميل وتحديث $mergedCount صنفاً من مخزون المدير محلياً في Room ✓"
+                    _syncMessage.value = feedback
+                    withContext(Dispatchers.Main) {
+                        onStatusMessage(feedback)
+                    }
+                    Log.i(TAG, "Instant sync: merged $mergedCount products from manager ($allCandidateUids) into Room.")
+                }
+
+                // Push local products that need to be in the shared cloud catalog
+                val allLocalProducts = repository.getAllProductsOnce()
+                val isManagerOrOwner = activeAccount.isRegularManager || activeAccount.isOwner
+                for (localProd in allLocalProducts) {
+                    val docId = getInventoryDocId(localProd)
+                    val remoteMatch = remoteProductsByDocId[docId]
+                    val isSeedSample = localProd.updatedAt <= 1000L ||
+                        (localProd.firestoreId.isBlank() && localProd.barcode.startsWith("6281000001"))
+
+                    val shouldPush = if (isManagerOrOwner) {
+                        // Manager pushes any modified/custom product missing or newer than cloud, OR initializes cloud if cloud is completely empty
+                        if (remoteProducts.isEmpty()) {
+                            true
+                        } else if (!isSeedSample) {
+                            remoteMatch == null || localProd.syncStatus != RecordSyncState.SYNCED || localProd.updatedAt > remoteMatch.updatedAt
+                        } else {
+                            false
                         }
-                        Log.i(TAG, "Worker instant sync: merged $mergedCount products from manager ($targetOwnerUid) into Room.")
+                    } else {
+                        // Worker only pushes non-sample products that the worker actually created or modified
+                        !isSeedSample && (localProd.syncStatus != RecordSyncState.SYNCED || remoteMatch == null)
+                    }
+
+                    if (shouldPush) {
+                        pushProductToCloud(localProd, activeAccount)
                     }
                 }
             } catch (e: Exception) {
-                Log.w(TAG, "Worker instant products pull failed (will rely on listener): ${e.message}")
+                Log.w(TAG, "Instant products pull/push failed (will rely on listener): ${e.message}")
             }
         }
 
-        productsListenerRegistration = productsCollection.addSnapshotListener { snapshot, error ->
+        val handleSnapshot = { snapshot: com.google.firebase.firestore.QuerySnapshot?, error: com.google.firebase.firestore.FirebaseFirestoreException? ->
             if (error != null) {
                 if (error.code == com.google.firebase.firestore.FirebaseFirestoreException.Code.PERMISSION_DENIED) {
                     Log.w(TAG, "مزامنة السحابة مقيدة (صلاحية ناقصة أو حساب Offline/Lite): ${error.message}")
@@ -234,46 +420,54 @@ class LiveInventorySyncManager(
                     Log.w(TAG, "خطأ في استقبال تحديثات المخزون اللحظية: ${error.message}")
                     _syncMessage.value = "خطأ في اتصال المزامنة: ${error.localizedMessage}"
                 }
-                return@addSnapshotListener
-            }
-
-            if (snapshot == null || snapshot.isEmpty) {
-                _lastSyncTimestamp.value = System.currentTimeMillis()
-                return@addSnapshotListener
-            }
-
-            scope.launch(Dispatchers.IO) {
-                try {
-                    val remoteProducts = mutableListOf<Product>()
-                    for (doc in snapshot.documents) {
-                        val prod = doc.toObject(Product::class.java)
-                        if (prod != null) {
-                            if (prod.firestoreId.isBlank()) {
-                                prod.firestoreId = doc.id
+            } else if (snapshot != null && !snapshot.isEmpty) {
+                scope.launch(Dispatchers.IO) {
+                    try {
+                        val remoteProducts = mutableListOf<Product>()
+                        for (doc in snapshot.documents) {
+                            val prod = parseProductDocument(doc)
+                            if (prod != null) {
+                                // التحقق من فك تشفير وتخزين صورة المنتج محلياً
+                                val resolvedImagePath = ProductCloudImageHelper.ensureLocalProductImage(context, prod)
+                                if (resolvedImagePath.isNotBlank()) {
+                                    prod.imagePath = resolvedImagePath
+                                }
+                                remoteProducts.add(prod)
                             }
-                            // التحقق من فك تشفير وتخزين صورة المنتج محلياً
-                            val resolvedImagePath = ProductCloudImageHelper.ensureLocalProductImage(context, prod)
-                            if (resolvedImagePath.isNotBlank()) {
-                                prod.imagePath = resolvedImagePath
-                            }
-                            remoteProducts.add(prod)
                         }
-                    }
 
-                    if (remoteProducts.isNotEmpty()) {
-                        val mergedCount = repository.mergeRemoteProductsWithTimestampResolution(remoteProducts)
-                        _syncedProductsCount.value = remoteProducts.size
-                        _lastSyncTimestamp.value = System.currentTimeMillis()
-                        val feedback = "تمت مزامنة $mergedCount صنفاً من مخزون الإدارة بنجاح ✓"
-                        _syncMessage.value = feedback
-                        withContext(Dispatchers.Main) {
-                            onStatusMessage(feedback)
+                        if (remoteProducts.isNotEmpty()) {
+                            val mergedCount = repository.mergeRemoteProductsWithTimestampResolution(remoteProducts)
+                            _syncedProductsCount.value = remoteProducts.size
+                            _lastSyncTimestamp.value = System.currentTimeMillis()
+                            val feedback = "تمت مزامنة $mergedCount صنفاً من مخزون الإدارة بنجاح ✓"
+                            _syncMessage.value = feedback
+                            withContext(Dispatchers.Main) {
+                                onStatusMessage(feedback)
+                            }
+                            Log.i(TAG, "تم دمج $mergedCount منتجاً سحابياً في قاعدة بيانات Room المحلية.")
                         }
-                        Log.i(TAG, "تم دمج $mergedCount منتجاً سحابياً في قاعدة بيانات Room المحلية.")
+                    } catch (e: Exception) {
+                        Log.e(TAG, "فشل دمج السلع المستلمة من Firestore: ${e.message}", e)
                     }
-                } catch (e: Exception) {
-                    Log.e(TAG, "فشل دمج السلع المستلمة من Firestore: ${e.message}", e)
                 }
+            } else {
+                _lastSyncTimestamp.value = System.currentTimeMillis()
+            }
+        }
+
+        val primaryCollection = db.collection("users").document(targetOwnerUid).collection("products")
+        productsListenerRegistration = primaryCollection.addSnapshotListener { snap, err ->
+            handleSnapshot(snap, err)
+        }
+
+        for (extraUid in candidateUids.drop(1)) {
+            if (extraUid != targetOwnerUid) {
+                val reg = db.collection("users").document(extraUid).collection("products")
+                    .addSnapshotListener { snap, err ->
+                        handleSnapshot(snap, err)
+                    }
+                extraProductsListeners.add(reg)
             }
         }
     }
@@ -284,6 +478,8 @@ class LiveInventorySyncManager(
     fun stopLiveInventorySync() {
         productsListenerRegistration?.remove()
         productsListenerRegistration = null
+        extraProductsListeners.forEach { it.remove() }
+        extraProductsListeners.clear()
         _isLiveSyncActive.value = false
         currentOwnerUid = ""
     }
@@ -311,7 +507,7 @@ class LiveInventorySyncManager(
 
         try {
             val docId = getInventoryDocId(product)
-            val docRef = db.collection("users").document(targetOwnerUid).collection("products").document(docId)
+            val candidateUids = resolveAllCandidateInventoryOwnerUids(activeAccount).ifEmpty { listOf(targetOwnerUid) }
 
             // معالجة وضغط الصورة إلى Base64 Data URL خفيف
             val base64Image = if (product.imagePath.isNotBlank()) {
@@ -320,6 +516,7 @@ class LiveInventorySyncManager(
                 product.imageUrl
             }
 
+            val now = System.currentTimeMillis()
             val payload = hashMapOf<String, Any?>(
                 "id" to product.id,
                 "firestoreId" to docId,
@@ -338,17 +535,21 @@ class LiveInventorySyncManager(
                 "isDeleted" to product.isDeleted,
                 "syncStatus" to RecordSyncState.SYNCED,
                 "serverUpdatedAt" to FieldValue.serverTimestamp(),
-                "updatedAt" to System.currentTimeMillis()
+                "updatedAt" to now
             )
 
-            docRef.set(payload, SetOptions.merge()).await()
+            for (uid in candidateUids) {
+                val docRef = db.collection("users").document(uid).collection("products").document(docId)
+                docRef.set(payload, SetOptions.merge()).await()
+            }
+
             if (product.id > 0) {
-                repository.markProductsAsSynced(listOf(product.id))
+                repository.updateProductFirestoreIdAndSyncStatus(product.id, docId, RecordSyncState.SYNCED)
             }
             repository.markSyncQueueByEntityTypeSynced("PRODUCT")
             repository.clearSyncedQueueItems()
-            _lastSyncTimestamp.value = System.currentTimeMillis()
-            Log.i(TAG, "تم رفع وتحديث السلعة «${product.name}» في سحابة المدير ($targetOwnerUid).")
+            _lastSyncTimestamp.value = now
+            Log.i(TAG, "تم رفع وتحديث السلعة «${product.name}» (الكمية: ${product.stock}) في سحابة المدير ($candidateUids).")
             Result.success(docId)
         } catch (e: Exception) {
             Log.e(TAG, "فشل رفع السلعة إلى Firestore: ${e.message}", e)
@@ -376,34 +577,67 @@ class LiveInventorySyncManager(
         if (targetOwnerUid.isBlank()) return@withContext Result.success(Unit)
 
         try {
+            val candidateUids = resolveAllCandidateInventoryOwnerUids(activeAccount).ifEmpty { listOf(targetOwnerUid) }
+            val localProductsById = repository.getAllProductsOnce().associateBy { it.id }
             val batch = db.batch()
-            val productsCollection = db.collection("users").document(targetOwnerUid).collection("products")
+            val now = System.currentTimeMillis()
+            val resolvedDocIdsByProductId = mutableMapOf<Int, String>()
 
             for (item in deductions) {
+                val localProd = localProductsById[item.productId]
                 val docId = when {
-                    item.firestoreId.isNotBlank() -> item.firestoreId
-                    item.barcode.isNotBlank() -> "bc_${item.barcode.trim().replace(Regex("[^a-zA-Z0-9]"), "_")}"
+                    localProd != null -> getInventoryDocId(localProd)
+                    item.firestoreId.isNotBlank() && item.firestoreId.matches(Regex("^[a-zA-Z0-9_\\-]+$")) -> item.firestoreId
+                    item.barcode.isNotBlank() -> "bc_${item.barcode.trim().replace(Regex("[^a-zA-Z0-9_\\-]"), "_")}"
                     item.productId > 0 -> "pid_${item.productId}"
                     else -> null
                 }
                 if (docId != null) {
-                    val ref = productsCollection.document(docId)
-                    val updates = mapOf(
-                        "stock" to item.resultingStock,
-                        "serverUpdatedAt" to FieldValue.serverTimestamp(),
-                        "updatedAt" to System.currentTimeMillis()
-                    )
-                    batch.set(ref, updates, SetOptions.merge())
+                    if (item.productId > 0) resolvedDocIdsByProductId[item.productId] = docId
+                    val updates = if (localProd != null) {
+                        hashMapOf<String, Any?>(
+                            "id" to localProd.id,
+                            "firestoreId" to docId,
+                            "userId" to targetOwnerUid,
+                            "name" to localProd.name.trim(),
+                            "purchasePrice" to localProd.purchasePrice,
+                            "price" to localProd.price,
+                            "stock" to item.resultingStock,
+                            "unitsPerCarton" to localProd.unitsPerCarton.coerceAtLeast(1),
+                            "barcode" to localProd.barcode.trim(),
+                            "cartonBarcode" to localProd.cartonBarcode.trim(),
+                            "category" to localProd.category.ifBlank { "عام" },
+                            "minStockAlert" to localProd.minStockAlert,
+                            "isDeleted" to localProd.isDeleted,
+                            "syncStatus" to RecordSyncState.SYNCED,
+                            "serverUpdatedAt" to FieldValue.serverTimestamp(),
+                            "updatedAt" to now
+                        )
+                    } else {
+                        hashMapOf<String, Any?>(
+                            "firestoreId" to docId,
+                            "stock" to item.resultingStock,
+                            "serverUpdatedAt" to FieldValue.serverTimestamp(),
+                            "updatedAt" to now
+                        )
+                    }
+                    for (uid in candidateUids) {
+                        val ref = db.collection("users").document(uid).collection("products").document(docId)
+                        batch.set(ref, updates, SetOptions.merge())
+                    }
                 }
             }
 
             batch.commit().await()
+            for ((prodId, docId) in resolvedDocIdsByProductId) {
+                repository.updateProductFirestoreIdAndSyncStatus(prodId, docId, RecordSyncState.SYNCED)
+            }
             val ids = deductions.mapNotNull { it.productId.takeIf { id -> id > 0 } }
             if (ids.isNotEmpty()) repository.markProductsAsSynced(ids)
             repository.markSyncQueueByEntityTypeSynced("PRODUCT")
             repository.clearSyncedQueueItems()
-            _lastSyncTimestamp.value = System.currentTimeMillis()
-            Log.i(TAG, "تم خصم مخزون ${deductions.size} أصناف سحابياً بنجاح بعد عملية البيع.")
+            _lastSyncTimestamp.value = now
+            Log.i(TAG, "تم خصم مخزون ${deductions.size} أصناف سحابياً بنجاح بعد عملية البيع ($candidateUids).")
             Result.success(Unit)
         } catch (e: Exception) {
             Log.e(TAG, "خطأ أثناء خصم المخزون سحابياً: ${e.message}", e)
@@ -431,34 +665,67 @@ class LiveInventorySyncManager(
         if (targetOwnerUid.isBlank()) return@withContext Result.success(Unit)
 
         try {
+            val candidateUids = resolveAllCandidateInventoryOwnerUids(activeAccount).ifEmpty { listOf(targetOwnerUid) }
+            val localProductsById = repository.getAllProductsOnce().associateBy { it.id }
             val batch = db.batch()
-            val productsCollection = db.collection("users").document(targetOwnerUid).collection("products")
+            val now = System.currentTimeMillis()
+            val resolvedDocIdsByProductId = mutableMapOf<Int, String>()
 
             for (item in increases) {
+                val localProd = localProductsById[item.productId]
                 val docId = when {
-                    item.firestoreId.isNotBlank() -> item.firestoreId
-                    item.barcode.isNotBlank() -> "bc_${item.barcode.trim().replace(Regex("[^a-zA-Z0-9]"), "_")}"
+                    localProd != null -> getInventoryDocId(localProd)
+                    item.firestoreId.isNotBlank() && item.firestoreId.matches(Regex("^[a-zA-Z0-9_\\-]+$")) -> item.firestoreId
+                    item.barcode.isNotBlank() -> "bc_${item.barcode.trim().replace(Regex("[^a-zA-Z0-9_\\-]"), "_")}"
                     item.productId > 0 -> "pid_${item.productId}"
                     else -> null
                 }
                 if (docId != null) {
-                    val ref = productsCollection.document(docId)
-                    val updates = mapOf(
-                        "stock" to item.resultingStock,
-                        "serverUpdatedAt" to FieldValue.serverTimestamp(),
-                        "updatedAt" to System.currentTimeMillis()
-                    )
-                    batch.set(ref, updates, SetOptions.merge())
+                    if (item.productId > 0) resolvedDocIdsByProductId[item.productId] = docId
+                    val updates = if (localProd != null) {
+                        hashMapOf<String, Any?>(
+                            "id" to localProd.id,
+                            "firestoreId" to docId,
+                            "userId" to targetOwnerUid,
+                            "name" to localProd.name.trim(),
+                            "purchasePrice" to localProd.purchasePrice,
+                            "price" to localProd.price,
+                            "stock" to item.resultingStock,
+                            "unitsPerCarton" to localProd.unitsPerCarton.coerceAtLeast(1),
+                            "barcode" to localProd.barcode.trim(),
+                            "cartonBarcode" to localProd.cartonBarcode.trim(),
+                            "category" to localProd.category.ifBlank { "عام" },
+                            "minStockAlert" to localProd.minStockAlert,
+                            "isDeleted" to localProd.isDeleted,
+                            "syncStatus" to RecordSyncState.SYNCED,
+                            "serverUpdatedAt" to FieldValue.serverTimestamp(),
+                            "updatedAt" to now
+                        )
+                    } else {
+                        hashMapOf<String, Any?>(
+                            "firestoreId" to docId,
+                            "stock" to item.resultingStock,
+                            "serverUpdatedAt" to FieldValue.serverTimestamp(),
+                            "updatedAt" to now
+                        )
+                    }
+                    for (uid in candidateUids) {
+                        val ref = db.collection("users").document(uid).collection("products").document(docId)
+                        batch.set(ref, updates, SetOptions.merge())
+                    }
                 }
             }
 
             batch.commit().await()
+            for ((prodId, docId) in resolvedDocIdsByProductId) {
+                repository.updateProductFirestoreIdAndSyncStatus(prodId, docId, RecordSyncState.SYNCED)
+            }
             val ids = increases.mapNotNull { it.productId.takeIf { id -> id > 0 } }
             if (ids.isNotEmpty()) repository.markProductsAsSynced(ids)
             repository.markSyncQueueByEntityTypeSynced("PRODUCT")
             repository.clearSyncedQueueItems()
-            _lastSyncTimestamp.value = System.currentTimeMillis()
-            Log.i(TAG, "تمت زيادة مخزون ${increases.size} أصناف سحابياً بنجاح بعد المشتريات/التزويد.")
+            _lastSyncTimestamp.value = now
+            Log.i(TAG, "تمت زيادة مخزون ${increases.size} أصناف سحابياً بنجاح بعد المشتريات/التزويد ($candidateUids).")
             Result.success(Unit)
         } catch (e: Exception) {
             Log.e(TAG, "خطأ أثناء زيادة المخزون سحابياً: ${e.message}", e)
@@ -484,19 +751,25 @@ class LiveInventorySyncManager(
 
         try {
             val docId = getInventoryDocId(product)
-            val ref = db.collection("users").document(targetOwnerUid).collection("products").document(docId)
+            val candidateUids = resolveAllCandidateInventoryOwnerUids(activeAccount).ifEmpty { listOf(targetOwnerUid) }
+            val now = System.currentTimeMillis()
             // استخدام Soft Delete لتحديث الأجهزة
             val updates = mapOf(
+                "firestoreId" to docId,
+                "name" to product.name.trim(),
                 "isDeleted" to true,
                 "serverUpdatedAt" to FieldValue.serverTimestamp(),
-                "updatedAt" to System.currentTimeMillis()
+                "updatedAt" to now
             )
-            ref.set(updates, SetOptions.merge()).await()
-            if (product.id > 0) repository.markProductsAsSynced(listOf(product.id))
+            for (uid in candidateUids) {
+                val ref = db.collection("users").document(uid).collection("products").document(docId)
+                ref.set(updates, SetOptions.merge()).await()
+            }
+            if (product.id > 0) repository.updateProductFirestoreIdAndSyncStatus(product.id, docId, RecordSyncState.SYNCED)
             repository.markSyncQueueByEntityTypeSynced("PRODUCT")
             repository.clearSyncedQueueItems()
-            _lastSyncTimestamp.value = System.currentTimeMillis()
-            Log.i(TAG, "تم حذف السلعة ${product.name} سحابياً.")
+            _lastSyncTimestamp.value = now
+            Log.i(TAG, "تم حذف السلعة ${product.name} سحابياً ($candidateUids).")
             Result.success(Unit)
         } catch (e: Exception) {
             Log.e(TAG, "خطأ أثناء حذف السلعة سحابياً: ${e.message}", e)
@@ -1025,12 +1298,21 @@ class LiveInventorySyncManager(
             var pushedSalesCount = 0
             var pushedPurchasesCount = 0
 
-            // 1. دفع السلع المحلية المعلقة فقط
+            val candidateUids = resolveAllCandidateInventoryOwnerUids(activeAccount).ifEmpty { listOf(targetOwnerUid) }
+            val isManagerOrOwner = activeAccount?.isRegularManager == true || activeAccount?.isOwner == true
+
+            // 1. دفع السلع المحلية المعلقة فقط (مع تجاهل بيانات العينة الافتراضية لدى العمال)
             val pendingProducts = repository.getPendingProductsOnce()
             if (pendingProducts.isNotEmpty() && targetOwnerUid.isNotBlank()) {
                 for (prod in pendingProducts) {
-                    val pushRes = pushProductToCloud(prod, activeAccount)
-                    if (pushRes.isSuccess) pushedProductsCount++
+                    val isSeedSample = prod.updatedAt <= 1000L ||
+                        (prod.firestoreId.isBlank() && prod.barcode.startsWith("6281000001"))
+                    if (!isSeedSample || isManagerOrOwner) {
+                        val pushRes = pushProductToCloud(prod, activeAccount)
+                        if (pushRes.isSuccess) pushedProductsCount++
+                    } else if (prod.id > 0) {
+                        repository.markProductsAsSynced(listOf(prod.id))
+                    }
                 }
             }
 
@@ -1102,36 +1384,30 @@ class LiveInventorySyncManager(
             repository.markSyncQueueByEntityTypeSynced("PURCHASE_INVOICE")
             repository.clearSyncedQueueItems()
 
-            // 4. سحب التعديلات السحابية التزايدية (فقط ما تم تحديثه بعد آخر طابع وقت)
+            // 4. سحب كتالوج السلع والكميات السحابية بالكامل لتجنب أي فروق توقيت بين الهواتف
             var pulledProductsCount = 0
             var pulledInvoicesCount = 0
             var pulledPurchasesCount = 0
 
             if (targetOwnerUid.isNotBlank()) {
-                // سحب المنتجات التزايدية
-                val productsQuery = if (lastSync > 0L) {
-                    db.collection("users").document(targetOwnerUid).collection("products")
-                        .whereGreaterThan("updatedAt", lastSync)
-                        .limit(150)
-                } else {
-                    db.collection("users").document(targetOwnerUid).collection("products")
-                        .limit(100)
-                }
-                val prodSnap = productsQuery.get().await()
-                if (!prodSnap.isEmpty) {
-                    val remoteProducts = mutableListOf<Product>()
-                    for (doc in prodSnap.documents) {
-                        val p = doc.toObject(Product::class.java)
-                        if (p != null) {
-                            if (p.firestoreId.isBlank()) p.firestoreId = doc.id
+                val remoteProductsByDocId = LinkedHashMap<String, Product>()
+                for (uid in candidateUids) {
+                    try {
+                        val prodSnap = db.collection("users").document(uid).collection("products").get().await()
+                        for (doc in prodSnap.documents) {
+                            val p = parseProductDocument(doc) ?: continue
                             val resolvedImg = ProductCloudImageHelper.ensureLocalProductImage(context, p)
                             if (resolvedImg.isNotBlank()) p.imagePath = resolvedImg
-                            remoteProducts.add(p)
+                            val existing = remoteProductsByDocId[doc.id]
+                            if (existing == null || p.updatedAt >= existing.updatedAt) {
+                                remoteProductsByDocId[doc.id] = p
+                            }
                         }
-                    }
-                    if (remoteProducts.isNotEmpty()) {
-                        pulledProductsCount = repository.mergeRemoteProductsWithTimestampResolution(remoteProducts)
-                    }
+                    } catch (_: Exception) { }
+                }
+                val remoteProducts = remoteProductsByDocId.values.toList()
+                if (remoteProducts.isNotEmpty()) {
+                    pulledProductsCount = repository.mergeRemoteProductsWithTimestampResolution(remoteProducts)
                 }
 
                 // سحب الفواتير التزايدية
@@ -1252,11 +1528,20 @@ class LiveInventorySyncManager(
 
         _isComprehensiveSyncing.value = true
         try {
+            val candidateUids = resolveAllCandidateInventoryOwnerUids(activeAccount).ifEmpty { listOf(targetOwnerUid) }
+            val isManagerOrOwner = activeAccount?.isRegularManager == true || activeAccount?.isOwner == true
+
             // 1. دفع أي منتجات محلية معلقة (Pending Products) إلى سحابة المدير
             val pendingProducts = repository.getPendingProductsOnce()
             if (pendingProducts.isNotEmpty() && targetOwnerUid.isNotBlank()) {
                 for (prod in pendingProducts) {
-                    pushProductToCloud(prod, activeAccount)
+                    val isSeedSample = prod.updatedAt <= 1000L ||
+                        (prod.firestoreId.isBlank() && prod.barcode.startsWith("6281000001"))
+                    if (!isSeedSample || isManagerOrOwner) {
+                        pushProductToCloud(prod, activeAccount)
+                    } else if (prod.id > 0) {
+                        repository.markProductsAsSynced(listOf(prod.id))
+                    }
                 }
             }
 
@@ -1323,20 +1608,43 @@ class LiveInventorySyncManager(
             // 4. سحب ودمج كتالوج السلع السحابي للمدير
             var productsCount = 0
             if (targetOwnerUid.isNotBlank()) {
-                val prodSnap = db.collection("users").document(targetOwnerUid).collection("products").get().await()
-                productsCount = prodSnap.size()
-                val remoteList = mutableListOf<Product>()
-                for (doc in prodSnap.documents) {
-                    val p = doc.toObject(Product::class.java)
-                    if (p != null) {
-                        if (p.firestoreId.isBlank()) p.firestoreId = doc.id
-                        val resolvedImg = ProductCloudImageHelper.ensureLocalProductImage(context, p)
-                        if (resolvedImg.isNotBlank()) p.imagePath = resolvedImg
-                        remoteList.add(p)
-                    }
+                val remoteProductsByDocId = LinkedHashMap<String, Product>()
+                for (uid in candidateUids) {
+                    try {
+                        val prodSnap = db.collection("users").document(uid).collection("products").get().await()
+                        for (doc in prodSnap.documents) {
+                            val p = parseProductDocument(doc) ?: continue
+                            val resolvedImg = ProductCloudImageHelper.ensureLocalProductImage(context, p)
+                            if (resolvedImg.isNotBlank()) p.imagePath = resolvedImg
+                            val existing = remoteProductsByDocId[doc.id]
+                            if (existing == null || p.updatedAt >= existing.updatedAt) {
+                                remoteProductsByDocId[doc.id] = p
+                            }
+                        }
+                    } catch (_: Exception) { }
                 }
+                val remoteList = remoteProductsByDocId.values.toList()
+                productsCount = remoteList.size
                 if (remoteList.isNotEmpty()) {
                     repository.mergeRemoteProductsWithTimestampResolution(remoteList)
+                }
+
+                // Also push any local products missing in cloud for Manager (or custom worker products)
+                val allLocalProducts = repository.getAllProductsOnce()
+                for (localProd in allLocalProducts) {
+                    val docId = getInventoryDocId(localProd)
+                    val remoteMatch = remoteProductsByDocId[docId]
+                    val isSeedSample = localProd.updatedAt <= 1000L ||
+                        (localProd.firestoreId.isBlank() && localProd.barcode.startsWith("6281000001"))
+                    val shouldPush = if (isManagerOrOwner) {
+                        remoteList.isEmpty() || (!isSeedSample && (remoteMatch == null || localProd.updatedAt > remoteMatch.updatedAt))
+                    } else {
+                        !isSeedSample && remoteMatch == null
+                    }
+                    if (shouldPush) {
+                        val pushRes = pushProductToCloud(localProd, activeAccount)
+                        if (pushRes.isSuccess && remoteMatch == null) productsCount++
+                    }
                 }
                 _syncedProductsCount.value = productsCount
             }

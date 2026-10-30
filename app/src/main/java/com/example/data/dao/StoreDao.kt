@@ -53,6 +53,13 @@ interface StoreDao {
     @Query("UPDATE products SET syncStatus = 'SYNCED' WHERE id IN (:ids)")
     suspend fun markProductsAsSynced(ids: List<Int>)
 
+    @Query("UPDATE products SET firestoreId = :firestoreId, syncStatus = :status WHERE id = :productId")
+    suspend fun updateProductFirestoreIdAndSyncStatus(
+        productId: Int,
+        firestoreId: String,
+        status: String = RecordSyncState.SYNCED
+    )
+
     @Query("UPDATE products SET syncStatus = 'SYNCED'")
     suspend fun markAllProductsAsSynced()
 

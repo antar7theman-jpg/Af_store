@@ -2094,6 +2094,9 @@ class AntarSalesViewModel(
                 product.copy(barcode = cleanCode)
             }
             repository.saveProduct(updatedProduct)
+            launch(Dispatchers.IO) {
+                liveInventorySyncManager.pushProductToCloud(updatedProduct, activeStaffAccount)
+            }
             val barcodeTypeLabel = if (asCartonBarcode) "باركود كرتونة/عبوة" else "باركود قطعة فردية"
             repository.logActivity(
                 user = _currentUser.value,
@@ -2160,6 +2163,9 @@ class AntarSalesViewModel(
             } else {
                 repository.findProductByBarcode(cleanCode) ?: newProduct
             }
+            launch(Dispatchers.IO) {
+                liveInventorySyncManager.pushProductToCloud(savedProduct, activeStaffAccount)
+            }
             repository.logActivity(
                 user = _currentUser.value,
                 actionType = "PRODUCT_QUICK_POS_CREATED",
@@ -2223,6 +2229,9 @@ class AntarSalesViewModel(
                 newProduct.copy(id = insertedId)
             } else {
                 repository.findProductByBarcode(newProduct.barcode.ifBlank { newProduct.cartonBarcode }) ?: newProduct
+            }
+            launch(Dispatchers.IO) {
+                liveInventorySyncManager.pushProductToCloud(savedProduct, activeStaffAccount)
             }
             repository.logActivity(
                 user = _currentUser.value,
@@ -2767,6 +2776,12 @@ class AntarSalesViewModel(
     fun returnSaleItem(sale: Sale) {
         viewModelScope.launch {
             repository.deleteSaleAndRestoreStock(sale)
+            launch(Dispatchers.IO) {
+                val updatedProduct = repository.getAllProductsOnce().find { it.id == sale.productId }
+                if (updatedProduct != null) {
+                    liveInventorySyncManager.pushProductToCloud(updatedProduct, activeStaffAccount)
+                }
+            }
             repository.logActivity(
                 user = _currentUser.value,
                 actionType = "SALE_RETURN",
