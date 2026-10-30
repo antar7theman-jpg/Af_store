@@ -170,6 +170,12 @@ import androidx.compose.material.icons.filled.LocalOffer
 import androidx.compose.material.icons.filled.Payments
 import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.FactCheck
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.content.Context
+import android.os.Build
+import androidx.core.app.NotificationCompat
+import com.example.data.firebase.ProUpgradeRequest
 import com.example.ui.theme.AFStoreTheme
 import com.example.ui.theme.AppThemeMode
 import com.example.ui.theme.AppThemePalette
@@ -177,7 +183,41 @@ import com.example.ui.theme.LocalAFStoreSemanticColors
 import com.example.ui.viewmodels.AntarSalesViewModel
 import com.example.ui.viewmodels.AntarSalesViewModelFactory
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.catch
 import java.util.Locale
+
+private fun postOwnerAccountRequestSystemNotification(
+    context: Context,
+    title: String,
+    body: String,
+    notificationId: Int
+) {
+    try {
+        val channelId = "owner_account_requests_channel"
+        val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager ?: return
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                channelId,
+                "طلبات فتح الحسابات (المالك)",
+                NotificationManager.IMPORTANCE_HIGH
+            ).apply {
+                description = "إشعارات فورية للمالك بطلبات فتح حسابات المدراء والنسخ التجريبية"
+                enableVibration(true)
+            }
+            manager.createNotificationChannel(channel)
+        }
+        val notification = NotificationCompat.Builder(context, channelId)
+            .setSmallIcon(R.drawable.af_store_logo)
+            .setContentTitle(title)
+            .setContentText(body)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(body))
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setAutoCancel(true)
+            .build()
+        manager.notify(notificationId, notification)
+    } catch (_: Exception) {
+    }
+}
 
 enum class MainAppTab(
     val labelAr: String,
@@ -368,22 +408,113 @@ fun AFStoreMainApp(
                 selectedTab = tab
             }
         }
-        var lastNotifiedPendingCount by rememberSaveable { mutableStateOf(0) }
-        LaunchedEffect(pendingStaffCount, myStaffAccount.isOwner) {
-            if (myStaffAccount.isOwner && pendingStaffCount > lastNotifiedPendingCount && pendingStaffCount > 0) {
-                viewModel.showStatusMessage("🔔 تنبيه للمالك: لديك $pendingStaffCount طلب حساب جديد (بما في ذلك طلبات Pro التجريبية 7 أيام) بانتظار قرار القبول أو الرفض.")
+        var cloudUpgradeRequests by remember { mutableStateOf<List<ProUpgradeRequest>>(emptyList()) }
+        LaunchedEffect(myStaffAccount.isOwner) {
+            if (myStaffAccount.isOwner) {
+                try {
+                    val repo = StaffAccountRepository(appContext.applicationContext)
+                    repo.observeAllProUpgradeRequests()
+                        .catch { }
+                        .collect { reqList ->
+                            cloudUpgradeRequests = reqList
+                            reqList.forEach { req ->
+                                val isLite = req.status == "LITE_ACCOUNT_CREATED"
+                                val synthetic = com.example.data.firebase.StaffAccount(
+                                    userId = req.managerUid.ifBlank { req.requestId },
+                                    storeId = StaffAccountRepository.DEFAULT_STORE_ID,
+                                    email = req.managerEmail,
+                                    fullName = req.managerName,
+                                    phone = req.phone,
+                                    requestedRole = "manager",
+                                    role = "manager",
+                                    approvalStatus = if (isLite) StaffApprovalStatus.APPROVED else StaffApprovalStatus.PENDING,
+                                    branchName = req.branchName,
+                                    isTrial = !isLite,
+                                    syncMode = if (isLite) "lite" else "pro",
+                                    createdAt = req.requestedAt,
+                                    updatedAt = req.requestedAt
+                                )
+                                val existing = StaffAccountRepository.loadLocalAccountsRegistry(appContext)
+                                    .firstOrNull { it.userId == synthetic.userId || (it.fullName.equals(synthetic.fullName, ignoreCase = true) && synthetic.fullName.isNotBlank()) }
+                                if (existing == null) {
+                                    StaffAccountRepository.saveAccountToLocalRegistry(appContext, synthetic)
+                                }
+                            }
+                        }
+                } catch (_: Throwable) {
+                }
             }
-            lastNotifiedPendingCount = pendingStaffCount
+        }
+
+        val combinedStaffAccounts = remember(allStaffAccounts, cloudUpgradeRequests) {
+            val map = linkedMapOf<String, com.example.data.firebase.StaffAccount>()
+            allStaffAccounts.forEach { acc ->
+                val key = acc.userId.ifBlank { acc.fullName.lowercase() }
+                map[key] = acc
+            }
+            cloudUpgradeRequests.forEach { req ->
+                val uid = req.managerUid.ifBlank { req.requestId }
+                val alreadyExists = map.values.any {
+                    it.userId == uid || (req.managerName.isNotBlank() && it.fullName.equals(req.managerName, ignoreCase = true))
+                }
+                if (!alreadyExists && req.status in listOf("PENDING", "LITE_ACCOUNT_CREATED")) {
+                    val isLite = req.status == "LITE_ACCOUNT_CREATED"
+                    map[uid] = com.example.data.firebase.StaffAccount(
+                        userId = uid,
+                        storeId = StaffAccountRepository.DEFAULT_STORE_ID,
+                        email = req.managerEmail,
+                        fullName = req.managerName,
+                        phone = req.phone,
+                        requestedRole = "manager",
+                        role = "manager",
+                        approvalStatus = if (isLite) StaffApprovalStatus.APPROVED else StaffApprovalStatus.PENDING,
+                        branchName = req.branchName,
+                        isTrial = !isLite,
+                        syncMode = if (isLite) "lite" else "pro",
+                        createdAt = req.requestedAt,
+                        updatedAt = req.requestedAt
+                    )
+                }
+            }
+            map.values.toList()
+        }
+
+        val effectivePendingStaffCount = remember(combinedStaffAccounts) {
+            combinedStaffAccounts.count { it.approvalStatus == StaffApprovalStatus.PENDING || it.isPending }
+        }
+
+        var lastNotifiedPendingCount by rememberSaveable { mutableStateOf(0) }
+        LaunchedEffect(effectivePendingStaffCount, myStaffAccount.isOwner) {
+            if (myStaffAccount.isOwner && effectivePendingStaffCount > lastNotifiedPendingCount && effectivePendingStaffCount > 0) {
+                val latestPending = combinedStaffAccounts.firstOrNull { it.approvalStatus == StaffApprovalStatus.PENDING || it.isPending }
+                val who = latestPending?.let { "«${it.fullName}» (${it.branchName})" } ?: ""
+                val msg = "🔔 تنبيه للمالك: لديك $effectivePendingStaffCount طلب حساب جديد $who بانتظار قرار القبول أو الرفض."
+                viewModel.showStatusMessage(msg)
+                postOwnerAccountRequestSystemNotification(
+                    context = appContext,
+                    title = "طلب فتح حساب جديد 🔔",
+                    body = msg,
+                    notificationId = 9401
+                )
+            }
+            lastNotifiedPendingCount = effectivePendingStaffCount
         }
 
         var lastNotifiedLiteCount by rememberSaveable { mutableStateOf(0) }
-        val currentLiteCount = remember(allStaffAccounts) { allStaffAccounts.count { it.syncMode == "lite" } }
+        val currentLiteCount = remember(combinedStaffAccounts) { combinedStaffAccounts.count { it.syncMode == "lite" } }
         LaunchedEffect(currentLiteCount, myStaffAccount.isOwner) {
             if (myStaffAccount.isOwner && currentLiteCount > lastNotifiedLiteCount && currentLiteCount > 0) {
-                val latestLite = allStaffAccounts.firstOrNull { it.syncMode == "lite" }
+                val latestLite = combinedStaffAccounts.firstOrNull { it.syncMode == "lite" }
                 val storeInfo = if (latestLite != null && latestLite.branchName.isNotBlank()) " لمتجر «${latestLite.branchName}»" else ""
                 val managerInfo = if (latestLite != null && latestLite.fullName.isNotBlank()) " (${latestLite.fullName})" else ""
-                viewModel.showStatusMessage("🏪 إشعار للمالك: قام مستخدم جديد بفتح حساب Lite / offline مجاني$storeInfo$managerInfo وتفعيله تلقائياً.")
+                val msg = "🏪 إشعار للمالك: قام مستخدم جديد بفتح حساب Lite / offline مجاني$storeInfo$managerInfo وتفعيله تلقائياً."
+                viewModel.showStatusMessage(msg)
+                postOwnerAccountRequestSystemNotification(
+                    context = appContext,
+                    title = "فتح حساب Lite جديد 🏪",
+                    body = msg,
+                    notificationId = 9402
+                )
             }
             lastNotifiedLiteCount = currentLiteCount
         }
@@ -523,7 +654,7 @@ fun AFStoreMainApp(
                         actions = {
                             if (myStaffAccount.isOwner) {
                                 TopBarManagerPendingRequestsButton(
-                                    pendingCount = pendingStaffCount,
+                                    pendingCount = effectivePendingStaffCount,
                                     onClick = {
                                         showLogoMenu = false
                                         showQuickThemeMenu = false
@@ -1905,11 +2036,11 @@ fun AFStoreMainApp(
     }
 
     if (showPendingManagerRequestsModal) {
-        val pendingAccounts = remember(allStaffAccounts) {
-            allStaffAccounts.filter { it.approvalStatus == StaffApprovalStatus.PENDING || it.isPending }
+        val pendingAccounts = remember(combinedStaffAccounts) {
+            combinedStaffAccounts.filter { it.approvalStatus == StaffApprovalStatus.PENDING || it.isPending }
         }
-        val liteAccounts = remember(allStaffAccounts) {
-            allStaffAccounts.filter { it.syncMode == "lite" }
+        val liteAccounts = remember(combinedStaffAccounts) {
+            combinedStaffAccounts.filter { it.syncMode == "lite" }
         }
         val context = LocalContext.current
         val staffRepo = remember(context) { StaffAccountRepository(context.applicationContext) }

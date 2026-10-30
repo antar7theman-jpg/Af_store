@@ -210,7 +210,7 @@ fun attemptAutoSignIn(
     }
 
     val googleIdOption = GetGoogleIdOption.Builder()
-        .setFilterByAuthorizedAccounts(true)
+        .setFilterByAuthorizedAccounts(false)
         .setServerClientId(clientId)
         .setAutoSelectEnabled(true)
         .build()
@@ -384,49 +384,12 @@ fun FirebaseAuthAndApprovalGate(
     }
 
     LaunchedEffect(Unit) {
-        if (!attemptedSilentSignIn &&
-            auth.currentUser == null &&
-            !isDirectOwnerSessionActive &&
-            savedPersistentAccount == null
-        ) {
-            attemptedSilentSignIn = true
-            attemptAutoSignIn(
-                context = context,
-                credentialManager = credentialManager,
-                onAuthSuccess = { authErrorMessage = null },
-                onUnauthenticated = {},
-                scope = scope
-            )
-        }
+        attemptedSilentSignIn = true
     }
 
-    val activeFirebaseUser = currentUser
     val cachedApprovedAccount = savedPersistentAccount?.takeIf { it.isApproved }
 
     when {
-        activeFirebaseUser != null -> {
-            AuthenticatedStaffSessionGate(
-                firebaseUser = activeFirebaseUser,
-                initialCachedAccount = cachedApprovedAccount,
-                storeName = storeName,
-                onApprovedAccountReady = { approvedAcc ->
-                    StaffAccountRepository.saveAccountToLocalRegistry(context, approvedAcc)
-                    if (keepSessionOpen) {
-                        StaffAccountRepository.savePersistentStaffSession(
-                            context = context,
-                            account = approvedAcc,
-                            isDirectOwnerSession = false
-                        )
-                        savedPersistentAccount = approvedAcc
-                    }
-                    onApprovedAccountReady(approvedAcc)
-                },
-                onOwnerCreatedManager = onOwnerCreatedManager,
-                onSignOut = handleManualSignOut,
-                approvedContent = approvedContent
-            )
-        }
-
         isDirectOwnerSessionActive -> {
             DirectVerifiedOwnerSessionGate(
                 onApprovedAccountReady = { ownerAcc ->
@@ -561,9 +524,14 @@ private fun SavedPersistentStaffSessionGate(
         onApprovedAccountReady(savedAccount)
     }
 
-    LaunchedEffect(savedAccount.isOwner) {
-        if (savedAccount.isOwner) {
-            try {
+    LaunchedEffect(savedAccount.userId, savedAccount.isOwner) {
+        try {
+            StaffAccountRepository.ensureFirebaseCloudChannelConnected(context)
+            if (savedAccount.isOwner) {
+                runCatching { repository.bootstrapOwnerAccountIfNeeded() }
+            }
+            StaffAccountRepository.syncAllLocalAccountsToFirestore(context)
+            if (savedAccount.isOwner || savedAccount.isManagerOrAdmin) {
                 repository.observeAllStoreStaffAccounts()
                     .catch { e -> Log.w("StaffAuthGate", "Error observing store staff accounts", e) }
                     .collect { list ->
@@ -573,9 +541,9 @@ private fun SavedPersistentStaffSessionGate(
                         }
                         registrySnapshot = StaffAccountRepository.loadLocalAccountsRegistry(context)
                     }
-            } catch (e: Throwable) {
-                Log.w("StaffAuthGate", "Error in observeAllStoreStaffAccounts for owner: ${e.message}")
             }
+        } catch (e: Throwable) {
+            Log.w("StaffAuthGate", "Error in observeAllStoreStaffAccounts: ${e.message}")
         }
     }
 
@@ -755,6 +723,9 @@ private fun DirectVerifiedOwnerSessionGate(
 
     LaunchedEffect(Unit) {
         try {
+            StaffAccountRepository.ensureFirebaseCloudChannelConnected(context)
+            runCatching { repository.bootstrapOwnerAccountIfNeeded() }
+            StaffAccountRepository.syncAllLocalAccountsToFirestore(context)
             repository.observeAllStoreStaffAccounts()
                 .catch { e -> Log.w("StaffAuthGate", "Error observing store staff accounts", e) }
                 .collect { list ->
@@ -1365,7 +1336,7 @@ private fun FirebaseStaffSignInScreen(
                                 textAlign = TextAlign.Center
                             )
                             Text(
-                                text = "أدخل اسم المستخدم أو البريد الإلكتروني والرقم السري",
+                                text = "أدخل الاسم الكامل (أو اسم المستخدم) والرمز السري",
                                 fontSize = 13.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 textAlign = TextAlign.Center
@@ -1477,12 +1448,12 @@ private fun FirebaseStaffSignInScreen(
                             }
                         }
 
-                        // Identifier Input (Email or Username)
+                        // Identifier Input (Full Name or Username)
                         OutlinedTextField(
                             value = loginIdentifierInput,
                             onValueChange = { loginIdentifierInput = it },
-                            label = { Text("البريد الإلكتروني أو اسم المستخدم") },
-                            placeholder = { Text("example@store.com") },
+                            label = { Text("الاسم الكامل أو اسم المستخدم") },
+                            placeholder = { Text("مثال: farah joy") },
                             leadingIcon = {
                                 Icon(
                                     imageVector = Icons.Default.Person,
@@ -1657,71 +1628,7 @@ private fun FirebaseStaffSignInScreen(
 
                         
 
-                        // Divider with text "أو عبر المزامنة السحابية"
-                        Row(
-                            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            HorizontalDivider(modifier = Modifier.weight(1f), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-                            Text(
-                                text = " أو عبر المزامنة السحابية ",
-                                fontSize = 11.5.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.padding(horizontal = 8.dp)
-                            )
-                            HorizontalDivider(modifier = Modifier.weight(1f), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-                        }
-
-                        // Google Sign-In Button for Managers & Staff
-                        Button(
-                            onClick = {
-                                onClearError()
-                                onGoogleSignInClicked(
-                                    context = context,
-                                    credentialManager = credentialManager,
-                                    onAuthSuccess = onAuthSuccess,
-                                    onAuthError = onAuthError,
-                                    onAuthCancelled = {},
-                                    scope = coroutineScope
-                                )
-                            },
-                            shape = RoundedCornerShape(14.dp),
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = if (semantic.isDark) Color(0xFF0369A1) else Color(0xFF0284C7),
-                                contentColor = Color.White
-                            ),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(52.dp)
-                                .testTag("google_signin_manager_btn")
-                        ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.Center
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.CloudSync,
-                                    contentDescription = "تسجيل الدخول بحساب Google",
-                                    tint = Color.White,
-                                    modifier = Modifier.size(22.dp)
-                                )
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                    Text(
-                                        text = "تسجيل الدخول بحساب Google (المدير المستقل)",
-                                        fontWeight = FontWeight.Bold,
-                                        fontSize = 13.5.sp,
-                                        color = Color.White
-                                    )
-                                    Text(
-                                        text = "المزامنة السحابية الفورية للمدير المعتمد من المالك",
-                                        fontSize = 10.sp,
-                                        color = Color.White.copy(alpha = 0.9f)
-                                    )
-                                }
-                            }
-                        }
+                        
 
                         HorizontalDivider(
                             modifier = Modifier.padding(vertical = 2.dp),
@@ -2207,38 +2114,7 @@ private fun RegisterIndependentManagerFromLoginDialog(
                     .testTag("ind_mgr_phone_input")
             )
 
-            // 4. Email
-            OutlinedTextField(
-                value = email,
-                onValueChange = {
-                    email = it
-                    localError = null
-                },
-                label = { Text("البريد الإلكتروني") },
-                placeholder = { Text("name@example.com") },
-                leadingIcon = {
-                    Icon(
-                        imageVector = Icons.Default.Email,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary
-                    )
-                },
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
-                trailingIcon = {
-                    if (email.isNotEmpty()) {
-                        IconButton(onClick = { email = "" }) {
-                            Icon(Icons.Default.Close, contentDescription = "مسح البريد", modifier = Modifier.size(18.dp))
-                        }
-                    }
-                },
-                singleLine = true,
-                shape = RoundedCornerShape(12.dp),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag("ind_mgr_email_input")
-            )
-
-            // 5. Manager PIN / Password
+            // 4. Manager PIN / Password
             OutlinedTextField(
                 value = managerPin,
                 onValueChange = {
@@ -2389,7 +2265,6 @@ private fun RegisterIndependentManagerFromLoginDialog(
                     when {
                         fullName.trim().length < 2 -> localError = "يرجى إدخال اسم المدير المستقل"
                         branchName.trim().isEmpty() -> localError = "يرجى إدخال اسم المتجر أو الفرع المستقل"
-                        !email.contains("@") || email.trim().length < 5 -> localError = "يرجى إدخال بريد إلكتروني صحيح"
                         managerPin.trim().length < 4 -> localError = "يرجى تعيين رمز سري للمدير (4 خانات على الأقل)"
                         confirmPin.isNotEmpty() && confirmPin.trim() != managerPin.trim() -> {
                             localError = "رمز PIN غير متطابق مع التأكيد! يرجى التحقق"
@@ -4189,7 +4064,7 @@ fun StaffAccountsManagementModal(
                         onLocalRegistryUpdated()
                         onOwnerCreatedManager(created, managerPin)
                         showCreateManagerDialog = false
-                        actionFeedbackMessage = "تم إنشاء واعتماد ملف المدير المستقل «$fullName» ($branchName) بنجاح ✓. يستطيع المدير الآن فتح التطبيق من هاتفه واختيار «تسجيل الدخول بحساب Google» ($email) للدخول الفوري ومزامنة المتجر."
+                        actionFeedbackMessage = "تم إنشاء واعتماد ملف المدير المستقل «$fullName» ($branchName) ومزامنته سحابياً بنجاح ✓. يستطيع المدير الآن الدخول من هاتفه مباشرةً بكتابة اسمه ($fullName) والرمز السري ($managerPin)."
                     } else {
                         actionFeedbackMessage = res.exceptionOrNull()?.localizedMessage ?: "تعذر إنشاء ملف المدير المستقل"
                     }
@@ -4440,25 +4315,10 @@ private fun CreateManagerByOwnerDialog(
                         .testTag("new_manager_branch_input")
                 )
 
-                OutlinedTextField(
-                    value = managerEmail,
-                    onValueChange = {
-                        managerEmail = it
-                        localError = null
-                    },
-                    label = { Text("البريد الإلكتروني للمدير (Google أو اسم الدخول)") },
-                    leadingIcon = { Icon(Icons.Default.Email, contentDescription = null) },
-                    singleLine = true,
-                    shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("new_manager_email_input")
-                )
-
                 Surface(
                     shape = RoundedCornerShape(10.dp),
-                    color = Color(0xFF0284C7).copy(alpha = 0.12f),
-                    border = BorderStroke(1.dp, Color(0xFF0284C7).copy(alpha = 0.35f)),
+                    color = Color(0xFF059669).copy(alpha = 0.12f),
+                    border = BorderStroke(1.dp, Color(0xFF059669).copy(alpha = 0.35f)),
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Row(
@@ -4467,15 +4327,15 @@ private fun CreateManagerByOwnerDialog(
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         Icon(
-                            imageVector = Icons.Default.Info,
+                            imageVector = Icons.Default.CloudSync,
                             contentDescription = null,
-                            tint = Color(0xFF0284C7),
+                            tint = Color(0xFF059669),
                             modifier = Modifier.size(16.dp)
                         )
                         Text(
-                            text = "للمزامنة السحابية الفورية: أدخل نفس بريد Google الخاص بهاتف المدير، ليتمكن من الدخول فوراً بضغطة زر واحدة.",
+                            text = "مزامنة سحابية فورية بالاسم والرمز السري: يستطيع المدير الدخول من هاتفه مباشرةً بكتابة اسمه والرمز السري دون الحاجة لبريد إلكتروني.",
                             fontSize = 11.sp,
-                            color = if (semantic.isDark) Color(0xFFBAE6FD) else Color(0xFF0369A1),
+                            color = if (semantic.isDark) Color(0xFFA7F3D0) else Color(0xFF065F46),
                             lineHeight = 15.sp
                         )
                     }
@@ -4581,9 +4441,6 @@ private fun CreateManagerByOwnerDialog(
                             when {
                                 managerName.trim().length < 2 -> {
                                     localError = "يرجى إدخال الاسم الكامل للمدير المستقل"
-                                }
-                                !managerEmail.contains("@") || managerEmail.trim().length < 5 -> {
-                                    localError = "يرجى إدخال البريد الإلكتروني الصحيح للمدير"
                                 }
                                 managerLocalPin.trim().length < 4 -> {
                                     localError = "يرجى تعيين رمز سري للمدير لا يقل عن 4 خانات"
@@ -4829,28 +4686,13 @@ private fun CreateAffiliatedWorkerByManagerDialog(
                         workerName = it
                         localError = null
                     },
-                    label = { Text("الاسم الكامل للعامل التابع") },
+                    label = { Text("الاسم الكامل للعامل التابع (للدخول المباشر)") },
                     leadingIcon = { Icon(Icons.Default.Person, contentDescription = null) },
                     singleLine = true,
                     shape = RoundedCornerShape(12.dp),
                     modifier = Modifier
                         .fillMaxWidth()
                         .testTag("new_worker_fullname_input")
-                )
-
-                OutlinedTextField(
-                    value = workerEmail,
-                    onValueChange = {
-                        workerEmail = it
-                        localError = null
-                    },
-                    label = { Text("البريد الإلكتروني أو اسم الدخول للعامل (مثال: cashier1@afstore.com)") },
-                    leadingIcon = { Icon(Icons.Default.Email, contentDescription = null) },
-                    singleLine = true,
-                    shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("new_worker_email_input")
                 )
 
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -5102,17 +4944,9 @@ private fun CreateAffiliatedWorkerByManagerDialog(
                     Spacer(modifier = Modifier.width(8.dp))
                     Button(
                         onClick = {
-                            val normalizedEmail = if (workerEmail.trim().isNotBlank() && !workerEmail.contains("@")) {
-                                "${workerEmail.trim()}@afstore.com"
-                            } else {
-                                workerEmail.trim()
-                            }
                             when {
                                 workerName.trim().length < 2 -> {
                                     localError = "يرجى إدخال الاسم الكامل للعامل التابع"
-                                }
-                                normalizedEmail.length < 5 || !normalizedEmail.contains("@") -> {
-                                    localError = "يرجى إدخال البريد الإلكتروني أو معرّف الدخول للعامل"
                                 }
                                 workerPin.trim().length < 4 -> {
                                     localError = "يرجى تعيين رمز سري للعامل لا يقل عن 4 خانات"
@@ -5121,7 +4955,7 @@ private fun CreateAffiliatedWorkerByManagerDialog(
                                     onCreateWorker(
                                         resolvedTargetManager,
                                         workerName.trim(),
-                                        normalizedEmail,
+                                        "",
                                         workerPhone.trim(),
                                         workerPin.trim(),
                                         WorkerPermissions(

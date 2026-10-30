@@ -397,21 +397,6 @@ fun ProTrialRegistrationScreen(
                                 .testTag("pro_trial_phone_input")
                         )
 
-                        // Email Field
-                        OutlinedTextField(
-                            value = email,
-                            onValueChange = { email = it; errorMessage = null },
-                            label = { Text("البريد الإلكتروني للربط السحابي *") },
-                            placeholder = { Text("مثال: manager@gmail.com") },
-                            leadingIcon = { Icon(Icons.Default.Email, contentDescription = null) },
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
-                            singleLine = true,
-                            enabled = !isSubmitting,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .testTag("pro_trial_email_input")
-                        )
-
                         // Secret PIN Field
                         OutlinedTextField(
                             value = managerPin,
@@ -495,10 +480,6 @@ fun ProTrialRegistrationScreen(
                                 }
                                 if (cleanPhone.length < 8) {
                                     errorMessage = "يرجى إدخال رقم هاتف صحيح ليتواصل معك المالك لتأكيد الحساب"
-                                    return@Button
-                                }
-                                if (cleanEmail.length < 5 || !cleanEmail.contains("@")) {
-                                    errorMessage = "يرجى إدخال بريد إلكتروني صحيح للربط السحابي"
                                     return@Button
                                 }
                                 if (cleanPin.length < 4) {

@@ -1,15 +1,24 @@
 package com.example.data.firebase
 
+import android.app.Activity
 import android.content.Context
+import android.content.ContextWrapper
 import android.util.Log
+import androidx.credentials.CredentialManager
+import androidx.credentials.CustomCredential
+import androidx.credentials.GetCredentialRequest
 import com.example.R
 import com.example.data.datastore.UserSessionDataStore
 import com.example.data.models.User
 import com.example.data.models.UserRole
 import com.example.data.models.WorkerPermissions
+import com.google.android.libraries.identity.googleid.GetGoogleIdOption
+import com.google.android.libraries.identity.googleid.GetSignInWithGoogleOption
+import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
 import com.google.firebase.Firebase
 import com.google.firebase.Timestamp
 import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.auth.GoogleAuthProvider
 import com.google.firebase.auth.auth
 import com.google.firebase.firestore.DocumentSnapshot
 import com.google.firebase.firestore.FieldValue
@@ -566,14 +575,54 @@ class StaffAccountRepository(
             return isOwnerIdentity(emailOrUsername) && verifyOwnerSecretCode(secretCode)
         }
 
-        fun managerPreProvisionDocId(email: String): String {
-            val cleaned = email.trim().lowercase().replace(Regex("[^a-z0-9]"), "_")
-            return "mgr_${cleaned.take(100)}"
+        fun buildDeterministicSlug(input: String): String {
+            val trimmed = input.trim().lowercase()
+            val ascii = trimmed.replace(Regex("[^a-z0-9]"), "_")
+            val nonUnderscore = ascii.replace("_", "")
+            return if (nonUnderscore.length >= 2) {
+                ascii.take(100)
+            } else {
+                val hashHex = Integer.toUnsignedString(trimmed.hashCode(), 16)
+                "u_${hashHex}"
+            }
         }
 
-        fun workerPreProvisionDocId(email: String): String {
-            val cleaned = email.trim().lowercase().replace(Regex("[^a-z0-9]"), "_")
-            return "wrk_${cleaned.take(100)}"
+        fun normalizeStaffInternalEmail(nameOrEmail: String, rolePrefix: String = "mgr"): String {
+            val trimmed = nameOrEmail.trim().lowercase()
+            if (trimmed.contains("@") && trimmed.length >= 5) {
+                return trimmed.take(150)
+            }
+            val slug = buildDeterministicSlug(trimmed).trim('_')
+            return "${rolePrefix}_${slug}@afstore.app".take(150)
+        }
+
+        fun managerPreProvisionDocId(nameOrEmail: String): String {
+            val slug = buildDeterministicSlug(nameOrEmail)
+            return "mgr_${slug.take(100)}"
+        }
+
+        fun workerPreProvisionDocId(nameOrEmail: String): String {
+            val slug = buildDeterministicSlug(nameOrEmail)
+            return "wrk_${slug.take(100)}"
+        }
+
+        private tailrec fun Context.findActivity(): Activity? = when (this) {
+            is Activity -> this
+            is ContextWrapper -> baseContext.findActivity()
+            else -> null
+        }
+
+        /**
+         * Ensures the device has an active Firebase Firestore connection for Name + PIN cloud sync
+         * without triggering any Google Sign-In / CredentialManager account picker UI.
+         */
+        suspend fun ensureFirebaseCloudChannelConnected(context: Context): Boolean {
+            return try {
+                com.example.AFStoreApplication.initializeFirebase(context.applicationContext)
+                true
+            } catch (_: Exception) {
+                false
+            }
         }
 
         fun isKeepSessionOpenPreferred(context: Context): Boolean {
@@ -734,7 +783,6 @@ class StaffAccountRepository(
             deviceName: String,
             sessionToken: String
         ) {
-            if (Firebase.auth.currentUser == null) return
             try {
                 withTimeoutOrNull(2000L) {
                     val db = getFirestoreDb()
@@ -833,10 +881,6 @@ class StaffAccountRepository(
          */
         fun syncAccountToFirestore(account: StaffAccount, onComplete: ((Boolean) -> Unit)? = null) {
             try {
-                if (Firebase.auth.currentUser == null) {
-                    onComplete?.invoke(true)
-                    return
-                }
                 val db = getFirestoreDb()
                 val docRef = db.collection(COLLECTION_STAFF).document(account.userId)
                 val payload = account.toFirestorePayload()
@@ -883,10 +927,10 @@ class StaffAccountRepository(
             val cleanInput = emailOrUsername.trim()
             val cleanSecret = secretPinOrCode.trim()
             if (cleanInput.isBlank() || cleanSecret.isBlank()) {
-                return Result.failure(IllegalArgumentException("يرجى إدخال البريد/اسم الدخول والرمز السري"))
+                return Result.failure(IllegalArgumentException("يرجى إدخال الاسم والرمز السري"))
             }
 
-            // 1. Check Owner identity (Deffas antar - Antar7theman@gmail.com)
+            // 1. Check Owner identity (Deffas antar)
             if (verifyOwnerCredentials(cleanInput, cleanSecret)) {
                 val localDeviceId = getOrCreateDeviceId(context)
                 val localDeviceName = getDeviceModelName()
@@ -899,46 +943,90 @@ class StaffAccountRepository(
                 saveAccountToLocalRegistry(context, ownerAcc)
                 CoroutineScope(Dispatchers.IO).launch {
                     runCatching {
+                        ensureFirebaseCloudChannelConnected(context)
+                        StaffAccountRepository(context = context).bootstrapOwnerAccountIfNeeded()
+                        syncAllLocalAccountsToFirestore(context)
                         updateActiveDeviceSessionInFirestore(ownerAcc, localDeviceId, localDeviceName, sessionToken)
                     }
                 }
                 return Result.success(ownerAcc)
             }
 
-            // 2. Query Firestore directly for the account doc by ID (mgr_email) or by email/fullName query
-            var cloudMatched: StaffAccount? = null
-            if (Firebase.auth.currentUser != null) {
-                try {
-                    withTimeoutOrNull(3000L) {
-                        val db = getFirestoreDb(context)
-                        val mgrDocId = managerPreProvisionDocId(cleanInput)
-                        val directSnap = db.collection(COLLECTION_STAFF).document(mgrDocId).get().await()
-                        if (directSnap.exists()) {
-                            cloudMatched = StaffAccount.fromSnapshot(directSnap)
-                        } else {
-                            val wrkDocId = workerPreProvisionDocId(cleanInput)
-                            val wrkSnap = db.collection(COLLECTION_STAFF).document(wrkDocId).get().await()
-                            if (wrkSnap.exists()) {
-                                cloudMatched = StaffAccount.fromSnapshot(wrkSnap)
-                            } else {
-                                // Query by email
-                                val queryEmailSnap = db.collection(COLLECTION_STAFF)
-                                    .whereEqualTo("storeId", DEFAULT_STORE_ID)
-                                    .whereEqualTo("email", cleanInput.lowercase())
-                                    .get()
-                                    .await()
-                                cloudMatched = queryEmailSnap.documents.firstOrNull()?.let { StaffAccount.fromSnapshot(it) }
+            // Ensure cloud channel is connected if not already active
+            val hasCloudUser = try {
+                if (Firebase.auth.currentUser != null) true else ensureFirebaseCloudChannelConnected(context)
+            } catch (_: Exception) {
+                false
+            }
 
-                                // Query by fullName if not matched by email
-                                if (cloudMatched == null) {
-                                    val queryNameSnap = db.collection(COLLECTION_STAFF)
-                                        .whereEqualTo("storeId", DEFAULT_STORE_ID)
-                                        .whereEqualTo("fullName", cleanInput)
-                                        .get()
-                                        .await()
-                                    cloudMatched = queryNameSnap.documents.firstOrNull()?.let { StaffAccount.fromSnapshot(it) }
+            // 2. Query Firestore directly for the account by Name + Secret PIN or docId
+            var cloudMatched: StaffAccount? = null
+            if (hasCloudUser) {
+                try {
+                    withTimeoutOrNull(6000L) {
+                        val db = getFirestoreDb(context)
+                        val candidateDocIds = listOf(
+                            managerPreProvisionDocId(cleanInput),
+                            managerPreProvisionDocId(normalizeStaffInternalEmail(cleanInput, "mgr")),
+                            workerPreProvisionDocId(cleanInput),
+                            workerPreProvisionDocId(normalizeStaffInternalEmail(cleanInput, "wrk"))
+                        ).distinct()
+
+                        for (docId in candidateDocIds) {
+                            val snap = db.collection(COLLECTION_STAFF).document(docId).get().await()
+                            if (snap.exists()) {
+                                val parsed = StaffAccount.fromSnapshot(snap)
+                                if (parsed != null && (parsed.secretPin.isBlank() || parsed.secretPin == cleanSecret)) {
+                                    cloudMatched = parsed
+                                    break
+                                } else if (cloudMatched == null && parsed != null) {
+                                    cloudMatched = parsed
                                 }
                             }
+                        }
+
+                        // Query by fullName
+                        if (cloudMatched == null || (cloudMatched?.secretPin?.isNotBlank() == true && cloudMatched?.secretPin != cleanSecret)) {
+                            val queryNameSnap = db.collection(COLLECTION_STAFF)
+                                .whereEqualTo("storeId", DEFAULT_STORE_ID)
+                                .whereEqualTo("fullName", cleanInput)
+                                .get()
+                                .await()
+                            val nameDocs = queryNameSnap.documents.mapNotNull { StaffAccount.fromSnapshot(it) }
+                            val exactPinMatch = nameDocs.firstOrNull { it.secretPin == cleanSecret } ?: nameDocs.firstOrNull()
+                            if (exactPinMatch != null) {
+                                cloudMatched = exactPinMatch
+                            }
+                        }
+
+                        // Query by storeId + secretPin and match Name / Username case-insensitively
+                        if (cloudMatched == null || (cloudMatched?.secretPin?.isNotBlank() == true && cloudMatched?.secretPin != cleanSecret)) {
+                            val queryPinSnap = db.collection(COLLECTION_STAFF)
+                                .whereEqualTo("storeId", DEFAULT_STORE_ID)
+                                .whereEqualTo("secretPin", cleanSecret)
+                                .get()
+                                .await()
+                            val pinDocs = queryPinSnap.documents.mapNotNull { StaffAccount.fromSnapshot(it) }
+                            val matchedByPinAndName = pinDocs.firstOrNull { acc ->
+                                acc.fullName.equals(cleanInput, ignoreCase = true) ||
+                                    acc.email.equals(cleanInput, ignoreCase = true) ||
+                                    acc.email.substringBefore("@").equals(cleanInput, ignoreCase = true) ||
+                                    acc.fullName.trim().contains(cleanInput, ignoreCase = true) ||
+                                    cleanInput.contains(acc.fullName.trim(), ignoreCase = true)
+                            }
+                            if (matchedByPinAndName != null) {
+                                cloudMatched = matchedByPinAndName
+                            }
+                        }
+
+                        // Fallback query by email
+                        if (cloudMatched == null) {
+                            val queryEmailSnap = db.collection(COLLECTION_STAFF)
+                                .whereEqualTo("storeId", DEFAULT_STORE_ID)
+                                .whereEqualTo("email", cleanInput.lowercase())
+                                .get()
+                                .await()
+                            cloudMatched = queryEmailSnap.documents.firstOrNull()?.let { StaffAccount.fromSnapshot(it) }
                         }
                     }
                 } catch (e: Exception) {
@@ -949,8 +1037,8 @@ class StaffAccountRepository(
             // 3. Fallback or merge with local registry
             val registry = loadLocalAccountsRegistry(context)
             val matchedLocal = registry.firstOrNull { acc ->
-                val matchesIdentifier = acc.email.equals(cleanInput, ignoreCase = true) ||
-                    acc.fullName.equals(cleanInput, ignoreCase = true) ||
+                val matchesIdentifier = acc.fullName.equals(cleanInput, ignoreCase = true) ||
+                    acc.email.equals(cleanInput, ignoreCase = true) ||
                     acc.email.substringBefore("@").equals(cleanInput, ignoreCase = true)
                 matchesIdentifier && acc.secretPin.isNotBlank() && acc.secretPin == cleanSecret
             }
@@ -968,12 +1056,9 @@ class StaffAccountRepository(
             }
 
             if (targetAccount == null) {
-                val errorMsg = if (Firebase.auth.currentUser == null) {
-                    "لم يتم العثور على هذا الحساب محلياً على هذا الهاتف. إذا أنشأ المالك حسابك كمدير مستقل، يرجى الضغط على «تسجيل الدخول بحساب Google» بنفس هذا البريد للمزامنة السحابية فوراً."
-                } else {
-                    "بيانات الدخول غير صحيحة! تأكد من البريد/الاسم والرمز السري الخاص بالحساب."
-                }
-                return Result.failure(IllegalArgumentException(errorMsg))
+                return Result.failure(
+                    IllegalArgumentException("بيانات الدخول غير صحيحة! تأكد من كتابة الاسم الكامل والرمز السري كما أنشأهما المالك أو المدير.")
+                )
             }
 
             // Validate Secret PIN
@@ -1103,7 +1188,7 @@ class StaffAccountRepository(
         fun registerIndependentManagerFromLogin(
             context: Context,
             fullName: String,
-            email: String,
+            email: String = "",
             phone: String,
             branchName: String,
             managerSecretPin: String,
@@ -1122,7 +1207,6 @@ class StaffAccountRepository(
             )
         ): Result<StaffAccount> {
             val cleanName = fullName.trim().take(100)
-            val cleanEmail = email.trim().lowercase().take(150)
             val cleanPhone = phone.trim().take(30)
             val cleanBranch = branchName.trim().ifBlank { "فرع مستقل" }.take(100)
             val cleanPin = managerSecretPin.trim().take(64)
@@ -1130,14 +1214,12 @@ class StaffAccountRepository(
             if (cleanName.length < 2) {
                 return Result.failure(IllegalArgumentException("يرجى إدخال اسم المدير المستقل كاملاً"))
             }
-            if (cleanEmail.length < 4 || !cleanEmail.contains("@")) {
-                return Result.failure(IllegalArgumentException("يرجى إدخال بريد إلكتروني صحيح لملف المدير المستقل"))
-            }
             if (cleanPin.length < 4) {
                 return Result.failure(IllegalArgumentException("يرجى تعيين رمز سري للمدير لا يقل عن 4 خانات"))
             }
-            if (isOwnerEmail(cleanEmail)) {
-                return Result.failure(IllegalArgumentException("هذا البريد مخصص لحساب المالك الأساسي Deffas antar"))
+            val cleanEmail = normalizeStaffInternalEmail(email.ifBlank { cleanName }, "mgr")
+            if (isOwnerEmail(cleanEmail) || isOwnerIdentity(cleanName)) {
+                return Result.failure(IllegalArgumentException("هذا الاسم مخصص لحساب المالك الأساسي Deffas antar"))
             }
 
             val approveImmediately = if (optionalOwnerSecretCode.trim().isNotBlank()) {
@@ -1151,7 +1233,7 @@ class StaffAccountRepository(
                 false
             }
 
-            val docId = managerPreProvisionDocId(cleanEmail)
+            val docId = managerPreProvisionDocId(cleanName)
             val newManagerAccount = StaffAccount(
                 userId = docId,
                 storeId = DEFAULT_STORE_ID,
@@ -1194,7 +1276,7 @@ class StaffAccountRepository(
         suspend fun registerIndependentManagerWithCloudSync(
             context: Context,
             fullName: String,
-            email: String,
+            email: String = "",
             phone: String,
             branchName: String,
             managerSecretPin: String,
@@ -1225,7 +1307,12 @@ class StaffAccountRepository(
             if (localResult.isFailure) return localResult
 
             val account = localResult.getOrThrow()
-            if (Firebase.auth.currentUser == null) {
+            val hasCloud = try {
+                if (Firebase.auth.currentUser != null) true else ensureFirebaseCloudChannelConnected(context)
+            } catch (_: Exception) {
+                false
+            }
+            if (!hasCloud) {
                 return Result.success(account)
             }
             return try {
@@ -1249,14 +1336,13 @@ class StaffAccountRepository(
             fullName: String,
             storeName: String,
             phone: String,
-            email: String,
+            email: String = "",
             managerSecretPin: String,
             businessType: String = ""
         ): Result<StaffAccount> {
             val cleanName = fullName.trim().take(100)
             val cleanStore = storeName.trim().ifBlank { "متجر $cleanName" }.take(100)
             val cleanPhone = phone.trim().take(30)
-            val cleanEmail = email.trim().lowercase().take(150)
             val cleanPin = managerSecretPin.trim().take(64)
             val cleanBiz = businessType.trim().take(100)
 
@@ -1269,17 +1355,15 @@ class StaffAccountRepository(
             if (cleanPhone.length < 8) {
                 return Result.failure(IllegalArgumentException("يرجى إدخال رقم هاتف صحيح للتواصل وتفعيل الحساب"))
             }
-            if (cleanEmail.length < 4 || !cleanEmail.contains("@")) {
-                return Result.failure(IllegalArgumentException("يرجى إدخال بريد إلكتروني صحيح للربط السحابي"))
-            }
             if (cleanPin.length < 4) {
                 return Result.failure(IllegalArgumentException("يرجى تعيين رمز سري للحساب لا يقل عن 4 خانات"))
             }
-            if (isOwnerEmail(cleanEmail)) {
-                return Result.failure(IllegalArgumentException("هذا البريد مخصص لحساب المالك الأساسي Deffas antar"))
+            val cleanEmail = normalizeStaffInternalEmail(email.ifBlank { cleanName }, "mgr")
+            if (isOwnerEmail(cleanEmail) || isOwnerIdentity(cleanName)) {
+                return Result.failure(IllegalArgumentException("هذا الاسم مخصص لحساب المالك الأساسي Deffas antar"))
             }
 
-            val docId = managerPreProvisionDocId(cleanEmail)
+            val docId = managerPreProvisionDocId(cleanName)
             val trialDays = 7L
             val trialDurationMillis = trialDays * 24L * 3600L * 1000L
             val initialTrialEnd = System.currentTimeMillis() + trialDurationMillis
@@ -1314,6 +1398,14 @@ class StaffAccountRepository(
 
             // 1. Save locally to registry
             saveAccountToLocalRegistry(context, trialManager)
+
+            // Ensure cloud transport channel is connected so Owner receives the request immediately
+            try {
+                if (Firebase.auth.currentUser == null) {
+                    ensureFirebaseCloudChannelConnected(context)
+                }
+            } catch (_: Exception) {
+            }
 
             // 2. Sync to Firestore in staff collection
             val db = getFirestoreDb(context)
@@ -1356,14 +1448,13 @@ class StaffAccountRepository(
             fullName: String,
             storeName: String,
             phone: String,
-            email: String,
+            email: String = "",
             managerSecretPin: String,
             businessType: String = ""
         ): Result<StaffAccount> {
             val cleanName = fullName.trim().take(100)
             val cleanStore = storeName.trim().ifBlank { "متجر $cleanName" }.take(100)
             val cleanPhone = phone.trim().take(30)
-            val cleanEmail = email.trim().lowercase().take(150)
             val cleanPin = managerSecretPin.trim().take(64)
             val cleanBiz = businessType.trim().take(100)
 
@@ -1376,17 +1467,15 @@ class StaffAccountRepository(
             if (cleanPhone.length < 8) {
                 return Result.failure(IllegalArgumentException("يرجى إدخال رقم هاتف صحيح للتواصل"))
             }
-            if (cleanEmail.length < 4 || !cleanEmail.contains("@")) {
-                return Result.failure(IllegalArgumentException("يرجى إدخال بريد إلكتروني صحيح للربط السحابي"))
-            }
             if (cleanPin.length < 4) {
                 return Result.failure(IllegalArgumentException("يرجى تعيين رمز سري للحساب لا يقل عن 4 خانات"))
             }
-            if (isOwnerEmail(cleanEmail)) {
-                return Result.failure(IllegalArgumentException("هذا البريد مخصص لحساب المالك الأساسي Deffas antar"))
+            val cleanEmail = normalizeStaffInternalEmail(email.ifBlank { cleanName }, "mgr")
+            if (isOwnerEmail(cleanEmail) || isOwnerIdentity(cleanName)) {
+                return Result.failure(IllegalArgumentException("هذا الاسم مخصص لحساب المالك الأساسي Deffas antar"))
             }
 
-            val docId = managerPreProvisionDocId(cleanEmail)
+            val docId = managerPreProvisionDocId(cleanName)
 
             val liteManager = StaffAccount(
                 userId = docId,
@@ -1418,6 +1507,14 @@ class StaffAccountRepository(
 
             // 1. Save locally to registry
             saveAccountToLocalRegistry(context, liteManager)
+
+            // Ensure cloud transport channel is connected so Owner receives the notification immediately
+            try {
+                if (Firebase.auth.currentUser == null) {
+                    ensureFirebaseCloudChannelConnected(context)
+                }
+            } catch (_: Exception) {
+            }
 
             // 2. Sync to Firestore in staff collection
             val db = getFirestoreDb(context)
@@ -1457,9 +1554,8 @@ class StaffAccountRepository(
 
     fun observeMyStaffAccount(uid: String): Flow<StaffAccount?> = callbackFlow {
         val currentContext = appContext
-        if (auth.currentUser == null) {
-            val local = if (currentContext != null) loadLocalAccountsRegistry(currentContext).firstOrNull { it.userId == uid } else null
-            trySend(local)
+        if (uid.isBlank()) {
+            trySend(null)
             awaitClose { }
             return@callbackFlow
         }
@@ -1481,12 +1577,6 @@ class StaffAccountRepository(
     }
 
     fun observeAllStoreStaffAccounts(): Flow<List<StaffAccount>> = flow {
-        if (auth.currentUser == null) {
-            throw com.google.firebase.firestore.FirebaseFirestoreException(
-                "User is not authenticated",
-                com.google.firebase.firestore.FirebaseFirestoreException.Code.PERMISSION_DENIED
-            )
-        }
         val currentContext = appContext
         emitAll(
             callbackFlow {
@@ -1528,16 +1618,6 @@ class StaffAccountRepository(
      */
     fun observePendingManagerRequests(): Flow<List<StaffAccount>> = callbackFlow {
         val currentContext = appContext
-        if (auth.currentUser == null) {
-            val localList = if (currentContext != null) {
-                loadLocalAccountsRegistry(currentContext).filter {
-                    it.approvalStatus == StaffApprovalStatus.PENDING && (it.role == "manager" || it.requestedRole == "manager")
-                }
-            } else emptyList()
-            trySend(localList)
-            awaitClose { }
-            return@callbackFlow
-        }
         val query = db.collection(COLLECTION_STAFF)
             .whereEqualTo("storeId", DEFAULT_STORE_ID)
             .whereEqualTo("approvalStatus", StaffApprovalStatus.PENDING)
@@ -1575,11 +1655,6 @@ class StaffAccountRepository(
      * Used by active sessions to immediately terminate the session if the owner suspends, rejects, or deletes the account.
      */
     fun observeStaffAccountStatusLive(account: StaffAccount): Flow<StaffAccount?> = callbackFlow {
-        if (auth.currentUser == null) {
-            trySend(account)
-            awaitClose { }
-            return@callbackFlow
-        }
         val targetDocId = when {
             account.isOwner -> "owner_" + account.email.replace("@", "_").replace(".", "_")
             account.userId.isNotBlank() && (account.userId.startsWith("mgr_") || account.userId.startsWith("wrk_")) -> account.userId
@@ -1740,14 +1815,8 @@ class StaffAccountRepository(
      */
     fun observeManagerAffiliatedWorkers(managerUid: String): Flow<List<StaffAccount>> = callbackFlow {
         val currentContext = appContext
-        val currentUser = auth.currentUser
-        if (currentUser == null) {
-            val localWorkers = if (currentContext != null) {
-                loadLocalAccountsRegistry(currentContext).filter {
-                    it.role == "worker" && (it.parentManagerUid == managerUid || (managerUid.isNotBlank() && it.parentManagerEmail.equals(managerUid, ignoreCase = true)))
-                }
-            } else emptyList()
-            trySend(localWorkers)
+        if (managerUid.isBlank()) {
+            trySend(emptyList())
             awaitClose { }
             return@callbackFlow
         }
@@ -1855,8 +1924,8 @@ class StaffAccountRepository(
         fullNameOverride: String = OWNER_FULL_NAME,
         phoneOverride: String = "0662931569"
     ): Result<Unit> {
-        val uid = requireUserId()
         val currentUser = auth.currentUser
+        val uid = currentUser?.uid ?: "owner_deffas_antar"
         val email = (currentUser?.email ?: OWNER_DISPLAY_EMAIL).trim().take(150)
         val fullName = fullNameOverride.trim().ifBlank { OWNER_FULL_NAME }.take(100)
         val phone = phoneOverride.trim().take(30)
@@ -1865,16 +1934,18 @@ class StaffAccountRepository(
         val staffRef = db.collection(COLLECTION_STAFF).document(uid)
 
         return try {
-            val adminSnap = adminRef.get().await()
-            if (!adminSnap.exists()) {
-                val adminPayload = mapOf(
-                    "userId" to uid,
-                    "storeId" to DEFAULT_STORE_ID,
-                    "email" to email,
-                    "fullName" to fullName,
-                    "createdAt" to FieldValue.serverTimestamp()
-                )
-                adminRef.set(adminPayload).await()
+            if (currentUser != null) {
+                val adminSnap = adminRef.get().await()
+                if (!adminSnap.exists()) {
+                    val adminPayload = mapOf(
+                        "userId" to uid,
+                        "storeId" to DEFAULT_STORE_ID,
+                        "email" to email,
+                        "fullName" to fullName,
+                        "createdAt" to FieldValue.serverTimestamp()
+                    )
+                    adminRef.set(adminPayload).await()
+                }
             }
 
             val staffSnap = staffRef.get().await()
@@ -1890,6 +1961,7 @@ class StaffAccountRepository(
                     "approvalStatus" to StaffApprovalStatus.APPROVED,
                     "approvedByUid" to uid,
                     "approvedByName" to OWNER_FULL_NAME,
+                    "secretPin" to OWNER_SECRET_CODE,
                     "canMakeSales" to true,
                     "canManageInventory" to true,
                     "canEditPrices" to true,
@@ -2037,7 +2109,7 @@ class StaffAccountRepository(
      */
     suspend fun createManagerAccountByOwner(
         managerFullName: String,
-        managerEmail: String,
+        managerEmail: String = "",
         managerPhone: String,
         ownerSecretCode: String,
         permissions: WorkerPermissions,
@@ -2050,7 +2122,6 @@ class StaffAccountRepository(
             )
         }
         val cleanName = managerFullName.trim().take(100)
-        val cleanEmail = managerEmail.trim().lowercase().take(150)
         val cleanPhone = managerPhone.trim().take(30)
         val cleanBranch = branchName.trim().ifBlank { "فرع مستقل" }.take(100)
         val cleanPin = managerSecretPin.trim().ifBlank { "1234" }.take(64)
@@ -2058,11 +2129,21 @@ class StaffAccountRepository(
         if (cleanName.length < 2) {
             return Result.failure(IllegalArgumentException("يرجى إدخال الاسم الكامل للمدير المستقل"))
         }
-        if (cleanEmail.length < 5 || !cleanEmail.contains("@")) {
-            return Result.failure(IllegalArgumentException("يرجى إدخال البريد الإلكتروني الصحيح للمدير المستقل"))
+        val cleanEmail = normalizeStaffInternalEmail(managerEmail.ifBlank { cleanName }, "mgr")
+        val docId = managerPreProvisionDocId(if (managerEmail.contains("@")) cleanEmail else cleanName)
+
+        // Ensure Firebase cloud channel is connected if appContext is available
+        try {
+            val ctx = appContext
+            if (auth.currentUser == null && ctx != null) {
+                ensureFirebaseCloudChannelConnected(ctx)
+            }
+            if (auth.currentUser != null) {
+                runCatching { bootstrapOwnerAccountIfNeeded() }
+            }
+        } catch (_: Exception) {
         }
 
-        val docId = managerPreProvisionDocId(cleanEmail)
         val ownerUid = auth.currentUser?.uid ?: "owner_deffas_antar"
         val createdAccount = StaffAccount(
             userId = docId,
@@ -2090,6 +2171,10 @@ class StaffAccountRepository(
             createdAt = Timestamp.now(),
             updatedAt = Timestamp.now()
         )
+
+        appContext?.let { ctx ->
+            saveAccountToLocalRegistry(ctx, createdAccount)
+        }
 
         val staffRef = db.collection(COLLECTION_STAFF).document(docId)
         val payload = mapOf(
@@ -2120,6 +2205,13 @@ class StaffAccountRepository(
         )
         return try {
             staffRef.set(payload).await()
+            // Also write a mirror doc under mgr_<cleanName> if managerEmail was provided so Name + PIN lookup is instant
+            val nameDocId = managerPreProvisionDocId(cleanName)
+            if (nameDocId != docId) {
+                runCatching {
+                    db.collection(COLLECTION_STAFF).document(nameDocId).set(payload + ("userId" to nameDocId)).await()
+                }
+            }
             Result.success(createdAccount)
         } catch (e: Exception) {
             handleFirestoreError(e, OperationType.CREATE, staffRef.path)
@@ -2135,7 +2227,7 @@ class StaffAccountRepository(
     suspend fun createWorkerAccountByManager(
         managerAccount: StaffAccount,
         workerFullName: String,
-        workerEmail: String,
+        workerEmail: String = "",
         workerPhone: String,
         workerSecretPin: String,
         permissions: WorkerPermissions,
@@ -2152,7 +2244,6 @@ class StaffAccountRepository(
             )
         }
         val cleanName = workerFullName.trim().take(100)
-        val cleanEmail = workerEmail.trim().lowercase().take(150)
         val cleanPhone = workerPhone.trim().take(30)
         val cleanPin = workerSecretPin.trim().ifBlank { "1234" }.take(64)
         val safeSyncMode = if (syncMode in listOf("pro", "offline", "lite")) syncMode else "pro"
@@ -2160,18 +2251,24 @@ class StaffAccountRepository(
         if (cleanName.length < 2) {
             return Result.failure(IllegalArgumentException("يرجى إدخال الاسم الكامل للعامل التابع"))
         }
-        if (cleanEmail.length < 4 || !cleanEmail.contains("@")) {
-            return Result.failure(IllegalArgumentException("يرجى إدخال بريد إلكتروني أو معرّف بصيغة بريد للعامل (مثال: worker1@afstore.com)"))
-        }
         if (cleanPin.length < 4) {
             return Result.failure(IllegalArgumentException("يرجى تعيين رمز سري للعامل لا يقل عن 4 خانات"))
         }
-        if (isOwnerEmail(cleanEmail)) {
-            return Result.failure(IllegalArgumentException("لا يمكن استخدام بريد المالك الأساسي لحساب عامل"))
+        val cleanEmail = normalizeStaffInternalEmail(workerEmail.ifBlank { cleanName }, "wrk")
+        if (isOwnerEmail(cleanEmail) || isOwnerIdentity(cleanName)) {
+            return Result.failure(IllegalArgumentException("لا يمكن استخدام اسم المالك الأساسي لحساب عامل"))
         }
 
-        val docId = workerPreProvisionDocId(cleanEmail)
-        val effectiveManagerUid = auth.currentUser?.uid ?: managerAccount.userId.ifBlank { "manager_independent" }
+        try {
+            val ctx = appContext
+            if (auth.currentUser == null && ctx != null) {
+                ensureFirebaseCloudChannelConnected(ctx)
+            }
+        } catch (_: Exception) {
+        }
+
+        val docId = workerPreProvisionDocId(if (workerEmail.contains("@")) cleanEmail else cleanName)
+        val effectiveManagerUid = managerAccount.userId.ifBlank { auth.currentUser?.uid ?: "manager_independent" }
         val effectiveManagerName = managerAccount.fullName.ifBlank { "مدير مستقل" }.take(100)
         val effectiveManagerEmail = managerAccount.email.take(150)
         val effectiveBranch = managerAccount.branchName.ifBlank { "فرع $effectiveManagerName" }.take(100)
@@ -2318,10 +2415,6 @@ class StaffAccountRepository(
         val safeSyncMode = if (syncMode in listOf("pro", "offline", "lite")) syncMode else "pro"
         val isManagerRole = safeRole == "manager" || safeRole == "admin" || safeRole == "owner"
 
-        if (auth.currentUser == null) {
-            return Result.success(Unit)
-        }
-
         val staffRef = db.collection(COLLECTION_STAFF).document(targetAccount.userId)
         val updates = mutableMapOf<String, Any>(
             "role" to safeRole,
@@ -2353,7 +2446,7 @@ class StaffAccountRepository(
         return try {
             staffRef.update(updates).await()
 
-            if (isCallerOwner && !targetAccount.userId.startsWith("mgr_") && !targetAccount.userId.startsWith("wrk_")) {
+            if (auth.currentUser != null && isCallerOwner && !targetAccount.userId.startsWith("mgr_") && !targetAccount.userId.startsWith("wrk_")) {
                 val adminRef = db.collection(COLLECTION_ADMINS).document(targetAccount.userId)
                 if (isManagerRole && safeStatus == StaffApprovalStatus.APPROVED) {
                     val adminSnap = adminRef.get().await()
@@ -2383,9 +2476,6 @@ class StaffAccountRepository(
     }
 
     suspend fun deleteStaffAccount(targetUserId: String): Result<Unit> {
-        if (auth.currentUser == null) {
-            return Result.success(Unit)
-        }
         val staffRef = db.collection(COLLECTION_STAFF).document(targetUserId)
         return try {
             staffRef.delete().await()

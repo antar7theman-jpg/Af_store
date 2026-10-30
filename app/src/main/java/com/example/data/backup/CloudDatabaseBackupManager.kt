@@ -32,7 +32,7 @@ object CloudDatabaseBackupManager {
             }
 
             val auth = FirebaseAuth.getInstance()
-            val userId = auth.currentUser?.uid ?: staffAccount?.userId?.takeIf { it.isNotBlank() } ?: "default_store_user"
+            val userId = staffAccount?.userId?.takeIf { it.isNotBlank() } ?: auth.currentUser?.uid ?: "default_store_user"
 
             // 1. Create local encrypted backup file
             val localBackupResult = DatabaseBackupManager.createBackup(context, isAuto = true)
@@ -90,7 +90,7 @@ object CloudDatabaseBackupManager {
             }
 
             val auth = FirebaseAuth.getInstance()
-            val userId = auth.currentUser?.uid ?: staffAccount?.userId?.takeIf { it.isNotBlank() } ?: "default_store_user"
+            val userId = staffAccount?.userId?.takeIf { it.isNotBlank() } ?: auth.currentUser?.uid ?: "default_store_user"
 
             val db = StaffAccountRepository.getFirestoreDb(context)
             val docSnap = db.collection("users").document(userId)

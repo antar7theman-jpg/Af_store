@@ -4407,24 +4407,6 @@ class AntarSalesViewModel(
         viewModelScope.launch {
             try {
                 val context = getApplication<Application>()
-                if (Firebase.auth.currentUser == null) {
-                    val localMatch = StaffAccountRepository.loadLocalAccountsRegistry(context).find {
-                        it.email.equals(userKey, ignoreCase = true) ||
-                        it.userId.equals(userKey, ignoreCase = true) ||
-                        it.fullName.equals(_currentUser.value?.fullName, ignoreCase = true)
-                    }
-                    if (localMatch != null && (localMatch.isApprovedByOwner || (!localMatch.isTrialExpired && localMatch.isApproved))) {
-                        val localRoomUser = localMatch.toLocalRoomUser()
-                        repository.saveUser(localRoomUser)
-                        _currentUser.value = localRoomUser
-                        showStatusMessage("تم تفعيل حسابك بنجاح من قبل المالك! مرحباً بك.")
-                        onResult(true, "تم تفعيل الحساب بنجاح!")
-                    } else {
-                        showStatusMessage("الحساب لا يزال بانتظار موافقة وتفعيل المالك (Deffas Antar).")
-                        onResult(false, "الحساب لا يزال معلقاً بانتظار المالك.")
-                    }
-                    return@launch
-                }
                 com.example.AFStoreApplication.initializeFirebase(context.applicationContext)
                 val currentAuth = try { Firebase.auth.currentUser } catch (e: Exception) { null }
                 val db = StaffAccountRepository.getFirestoreDb(context)
@@ -4433,7 +4415,7 @@ class AntarSalesViewModel(
                     userKey.startsWith("mgr_") || userKey.startsWith("wrk_") -> userKey
                     userKey.contains("@") -> StaffAccountRepository.managerPreProvisionDocId(userKey)
                     currentAuth?.uid?.isNotBlank() == true -> currentAuth.uid
-                    else -> userKey
+                    else -> StaffAccountRepository.managerPreProvisionDocId(userKey)
                 }
                 val queryTask = if (isOwner) {
                     db.collection(StaffAccountRepository.COLLECTION_STAFF).get()

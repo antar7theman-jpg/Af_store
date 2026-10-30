@@ -1006,10 +1006,11 @@ class LiveInventorySyncManager(
             return@withContext ComprehensiveSyncResult(true, offlineMsg, 0, 0, 0)
         }
 
-        if (auth.currentUser == null) {
+        val targetOwnerUid = resolveInventoryOwnerUid(activeAccount)
+        if (targetOwnerUid.isBlank()) {
             repository.markAllTablesAndQueueAsSynced()
             repository.clearSyncedQueueItems()
-            val offlineMsg = "تم تأكيد العمليات محلياً ✓ (سجّل الدخول بحساب Google للمزامنة السحابية)"
+            val offlineMsg = "تم تأكيد العمليات محلياً ✓"
             _syncMessage.value = offlineMsg
             _lastSyncTimestamp.value = syncStartTime
             prefs?.edit()?.putLong("last_incremental_sync_timestamp", syncStartTime)?.putString("last_sync_message", offlineMsg)?.apply()
@@ -1018,7 +1019,6 @@ class LiveInventorySyncManager(
         }
 
         _isComprehensiveSyncing.value = true
-        val targetOwnerUid = resolveInventoryOwnerUid(activeAccount)
 
         try {
             var pushedProductsCount = 0
@@ -1234,10 +1234,11 @@ class LiveInventorySyncManager(
             )
         }
 
-        if (auth.currentUser == null) {
+        val targetOwnerUid = resolveInventoryOwnerUid(activeAccount)
+        if (targetOwnerUid.isBlank()) {
             repository.markAllTablesAndQueueAsSynced()
             repository.clearSyncedQueueItems()
-            val offlineMsg = "تم تأكيد وحفظ جميع العمليات في قاعدة البيانات المحلية بنجاح ✓ (سجّل الدخول بحساب Google للمزامنة السحابية)"
+            val offlineMsg = "تم تأكيد وحفظ جميع العمليات في قاعدة البيانات المحلية بنجاح ✓"
             _syncMessage.value = offlineMsg
             _isComprehensiveSyncing.value = false
             return@withContext ComprehensiveSyncResult(
@@ -1250,7 +1251,6 @@ class LiveInventorySyncManager(
         }
 
         _isComprehensiveSyncing.value = true
-        val targetOwnerUid = resolveInventoryOwnerUid(activeAccount)
         try {
             // 1. دفع أي منتجات محلية معلقة (Pending Products) إلى سحابة المدير
             val pendingProducts = repository.getPendingProductsOnce()

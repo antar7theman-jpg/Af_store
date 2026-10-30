@@ -436,27 +436,6 @@ fun LiteAccountRegistrationScreen(
                             )
                         )
 
-                        // Email
-                        OutlinedTextField(
-                            value = email,
-                            onValueChange = { email = it; errorMessage = null },
-                            label = { Text("البريد الإلكتروني للربط السحابي *") },
-                            placeholder = { Text("name@example.com") },
-                            leadingIcon = {
-                                Icon(Icons.Default.Email, contentDescription = null, tint = emeraldColor)
-                            },
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
-                            singleLine = true,
-                            shape = RoundedCornerShape(12.dp),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .testTag("lite_reg_email_input"),
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedBorderColor = emeraldColor,
-                                focusedLabelColor = emeraldColor
-                            )
-                        )
-
                         // PIN Code
                         OutlinedTextField(
                             value = managerPin,
@@ -551,10 +530,6 @@ fun LiteAccountRegistrationScreen(
                                 }
                                 if (phone.trim().length < 8) {
                                     errorMessage = "يرجى إدخال رقم هاتف صحيح للتواصل"
-                                    return@Button
-                                }
-                                if (email.trim().length < 4 || !email.contains("@")) {
-                                    errorMessage = "يرجى إدخال بريد إلكتروني صحيح للربط السحابي"
                                     return@Button
                                 }
                                 if (managerPin.trim().length < 4) {
